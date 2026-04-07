@@ -18,7 +18,7 @@ fn main {
   let _r7 = @bridge.ffi_get_modes()
   let _r8 = @bridge.ffi_focus_event(gained)
   // Session management
-  let _s1 = @bridge.ffi_create_session(rows, cols)
+  let _s1 : Bytes = @bridge.ffi_create_session(rows, cols)
   let _s2 = @bridge.ffi_destroy_session(@utf8.encode("1"))
   let _s3 = @bridge.ffi_switch_session(@utf8.encode("1"))
   let _s4 = @bridge.ffi_list_sessions()

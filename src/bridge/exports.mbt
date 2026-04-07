@@ -41,12 +41,20 @@ let result_buf : ResultBuf = { result_bytes: Bytes::new(0) }
 // ========== Session Management ==========
 
 ///|
-/// Create a new session. Returns the session ID (> 0) on success, -1 on failure.
-pub fn ffi_create_session(rows_bytes : Bytes, cols_bytes : Bytes) -> Int {
+/// Create a new session with terminal init + PTY spawn.
+/// Returns session info as JSON: {"id":N,"fd":N}
+/// The platform adapter uses fd to drive PTY I/O.
+pub fn ffi_create_session(rows_bytes : Bytes, cols_bytes : Bytes) -> Bytes {
   let rows = bytes_to_int(rows_bytes, 24)
   let cols = bytes_to_int(cols_bytes, 80)
   bridge_state.initialized = true
-  bridge_state.sessions.create_session(rows, cols)
+  let (session_id, master_fd) = bridge_state.sessions.create_session(rows, cols)
+  let m : Map[String, Json] = {
+    "id": session_id.to_json(),
+    "fd": master_fd.to_json(),
+  }
+  result_buf.result_bytes = @utf8.encode(m.to_json().stringify())
+  result_buf.result_bytes
 }
 
 ///|
@@ -99,7 +107,8 @@ pub fn ffi_init(rows_bytes : Bytes, cols_bytes : Bytes) -> Int {
   bridge_state.initialized = true
   // Create a session if none exists
   if bridge_state.sessions.count() == 0 {
-    bridge_state.sessions.create_session(rows, cols) |> ignore
+    let _ = bridge_state.sessions.create_session(rows, cols)
+
   }
   0
 }
@@ -278,7 +287,7 @@ pub fn ffi_gpu_init(
   let width = bytes_to_int(width_bytes, 0)
   let height = bytes_to_int(height_bytes, 0)
   let theme = bridge_state.theme
-  let font_config : @font.FontConfig = { font_size: 26, atlas_size: 1024 }
+  let font_config : @font.FontConfig = { font_name: "Menlo", font_size: 26, atlas_size: 1024 }
   let font_engine = @font.FontEngine::new(config=font_config)
   let render_config : @renderer.RendererConfig = {
     cell_width: 8,

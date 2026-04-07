@@ -15,9 +15,7 @@ struct HelloTTYApp: App {
         .commands {
             CommandGroup(after: .newItem) {
                 Button("New Tab") {
-                    let tab = appDelegate.tabManager.newTab()
-                    tab.state.initialize()
-                    tab.state.startShell()
+                    appDelegate.tabManager.newTab()
                 }
                 .keyboardShortcut("t", modifiers: .command)
             }
@@ -32,19 +30,6 @@ struct MainWindowView: View {
 
     var body: some View {
         ZStack {
-            // Behind-window blur layer.
-            //
-            // This NSVisualEffectView with .behindWindow blending is the ONLY
-            // way to get the macOS window-compositor Gaussian blur.
-            // `.ignoresSafeArea()` makes it extend under the titlebar, so
-            // both the toolbar chrome and the content area share the same
-            // continuous blur — matching Terminal.app / Ghostty behavior.
-            //
-            // Material choices:
-            //   .hudWindow        — dark, high saturation (good for dark terminals)
-            //   .underWindowBackground — neutral, adapts to light/dark appearance
-            //   .sidebar           — Finder sidebar style
-            //   .fullScreenUI      — very dark
             VisualEffectBackground(
                 material: .hudWindow,
                 blendingMode: .behindWindow,
@@ -52,7 +37,6 @@ struct MainWindowView: View {
             )
             .ignoresSafeArea()
 
-            // Terminal content (drawn on top of the blur)
             if let tab = tabManager.selectedTab {
                 TerminalContainerView(state: tab.state)
                     .id(tab.id)
@@ -61,7 +45,6 @@ struct MainWindowView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Toolbar area: tab capsules + new-tab button
         .toolbar {
             ToolbarItem(placement: .principal) {
                 GlassTabBarView(tabManager: tabManager)
@@ -69,9 +52,7 @@ struct MainWindowView: View {
         }
         .onAppear {
             if tabManager.tabs.isEmpty {
-                let tab = tabManager.newTab()
-                tab.state.initialize()
-                tab.state.startShell()
+                tabManager.newTab()
             }
         }
     }
@@ -95,11 +76,6 @@ struct PlaceholderView: View {
 
 // MARK: - Glass Tab Bar (toolbar-inline)
 
-/// Tab bar rendered as glass capsules inside the unified toolbar.
-///
-/// Each tab is a translucent capsule; the selected tab has a brighter,
-/// more opaque glass fill — mimicking the Liquid Glass tab style from
-/// Finder in macOS 26.
 struct GlassTabBarView: View {
     @ObservedObject var tabManager: TabManager
 
@@ -114,11 +90,8 @@ struct GlassTabBarView: View {
                 )
             }
 
-            // "+" button — plain icon, matching Finder style
             Button(action: {
-                let newTab = tabManager.newTab()
-                newTab.state.initialize()
-                newTab.state.startShell()
+                tabManager.newTab()
             }) {
                 Image(systemName: "plus")
                     .font(.system(size: 13, weight: .medium))
@@ -149,7 +122,6 @@ struct GlassTabCapsule: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
 
-            // Close button: visible on hover or when selected
             if isSelected || isHovering {
                 Button(action: onClose) {
                     Image(systemName: "xmark")

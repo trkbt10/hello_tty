@@ -30,8 +30,8 @@ pub fn FontEngine::new(config~ : FontConfig = FontConfig::default()) -> FontEngi
 /// Initialize the font engine via platform FFI.
 /// Reads font metrics and prepares the atlas.
 pub fn FontEngine::init(self : FontEngine) -> Unit!FontError {
-  let empty_path = Bytes::new(0)
-  let font_ret = @ffi.font_init(empty_path, 0, self.config.font_size)
+  let font_name = @utf8.encode(self.config.font_name)
+  let font_ret = @ffi.font_init(font_name, font_name.length(), self.config.font_size)
   if font_ret < 0 {
     raise FontInitFailed("Font engine initialization failed")
   }

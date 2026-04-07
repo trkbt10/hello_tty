@@ -4,13 +4,14 @@ import Combine
 
 /// Represents a single terminal tab.
 ///
-/// The session lifecycle is managed by MoonBit (src/session/).
+/// The session lifecycle (terminal init, PTY spawn, shell path resolution)
+/// is managed entirely by MoonBit (src/session/).
 /// This is a thin Swift wrapper providing Combine/SwiftUI observability.
 class TerminalTab: Identifiable, ObservableObject {
     let id = UUID()
     /// MoonBit session ID (from SessionManager).
     let sessionId: Int32
-    @Published var title: String = "zsh"
+    @Published var title: String = "Terminal"
     @Published var isActive: Bool = true
     let state: TerminalState
 
@@ -36,11 +37,15 @@ class TerminalTab: Identifiable, ObservableObject {
 
 /// Manages the collection of terminal tabs.
 ///
-/// Session lifecycle is delegated to MoonBit SessionManager (SoT).
-/// This class handles:
-///   - Swift/SwiftUI observability (@Published)
-///   - PTY orchestration (platform-specific)
-///   - Mapping MoonBit session IDs to Swift TerminalTab objects
+/// Session lifecycle is FULLY delegated to MoonBit SessionManager (SoT):
+///   - Shell path resolution ($SHELL) → MoonBit
+///   - Terminal init (grid, parser) → MoonBit
+///   - PTY spawn (posix_spawn) → MoonBit
+///
+/// This class only handles:
+///   - SwiftUI observability (@Published)
+///   - PTY I/O loop (platform threading concern — MoonBit GC not thread-safe)
+///   - Mapping MoonBit session IDs to Swift UI objects
 class TabManager: ObservableObject {
     @Published var tabs: [TerminalTab] = []
     @Published var selectedTabId: UUID?
@@ -57,31 +62,47 @@ class TabManager: ObservableObject {
         return tabs.first(where: { $0.id == id })
     }
 
+    /// Create a new tab. MoonBit handles everything:
+    ///   1. Resolve shell from $SHELL
+    ///   2. Create terminal (grid + parser)
+    ///   3. Spawn PTY (posix_spawn)
+    /// Swift only starts the I/O read loop with the returned master_fd.
     @discardableResult
-    func newTab(shell: String = "/bin/zsh", rows: Int = 24, cols: Int = 80) -> TerminalTab {
-        // Create session in MoonBit (SoT)
-        let sessionId = bridge.createSession(rows: rows, cols: cols)
+    func newTab(rows: Int = 24, cols: Int = 80) -> TerminalTab {
+        // Single call to MoonBit — creates session + spawns PTY
+        guard let result = bridge.createSession(rows: rows, cols: cols) else {
+            NSLog("hello_tty: failed to create session")
+            // Fallback: create a tab with no PTY
+            let state = TerminalState(theme: theme)
+            let tab = TerminalTab(sessionId: -1, state: state)
+            tabs.append(tab)
+            selectedTabId = tab.id
+            return tab
+        }
 
         let state = TerminalState(theme: theme)
-        let tab = TerminalTab(sessionId: sessionId, state: state)
+        let tab = TerminalTab(sessionId: result.sessionId, state: state)
         tabs.append(tab)
         selectedTabId = tab.id
 
         // Switch MoonBit active session
-        _ = bridge.switchSession(id: sessionId)
+        _ = bridge.switchSession(id: result.sessionId)
+
+        // Start PTY I/O loop (platform responsibility — threading)
+        if result.masterFd >= 0 {
+            state.startPtyLoop(masterFd: result.masterFd)
+        }
 
         return tab
     }
 
     func closeTab(_ tab: TerminalTab) {
-        tab.state.shutdown()
-        // Destroy session in MoonBit (SoT)
+        tab.state.stopPtyLoop()
         bridge.destroySession(id: tab.sessionId)
 
         tabs.removeAll(where: { $0.id == tab.id })
         if selectedTabId == tab.id {
             selectedTabId = tabs.last?.id
-            // Switch MoonBit to new active session
             if let newTab = tabs.last {
                 _ = bridge.switchSession(id: newTab.sessionId)
             }
@@ -90,13 +111,12 @@ class TabManager: ObservableObject {
 
     func selectTab(_ tab: TerminalTab) {
         selectedTabId = tab.id
-        // Switch MoonBit active session
         _ = bridge.switchSession(id: tab.sessionId)
     }
 
     func closeAll() {
         for tab in tabs {
-            tab.state.shutdown()
+            tab.state.stopPtyLoop()
             bridge.destroySession(id: tab.sessionId)
         }
         tabs.removeAll()

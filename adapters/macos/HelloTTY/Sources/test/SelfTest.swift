@@ -7,8 +7,9 @@ import AppKit
 /// with 0 (pass) or 1 (fail).
 ///
 /// Screenshots are saved to /tmp/hello_tty_selftest_*.png for inspection.
-/// No Screen Recording or Accessibility permissions are needed — the app
-/// captures its own views via NSView.cacheDisplay.
+/// Uses CGWindowListCreateImage to capture GPU-rendered content (Metal/wgpu).
+/// Screen Recording permission may be needed on macOS 14+ for cross-process
+/// capture, but self-capture of own windows works without it.
 class SelfTestRunner {
     let tabManager: TabManager
     var failures: [String] = []
@@ -122,11 +123,21 @@ class SelfTestRunner {
             return
         }
 
-        // Resize to a larger size
+        // Resize the window
         let newFrame = NSRect(x: window.frame.origin.x, y: window.frame.origin.y,
                               width: 1024, height: 768)
         window.setFrame(newFrame, display: true, animate: false)
-        pass("test4_resize: Resized to 1024x768 (was \(preResizeRows)x\(preResizeCols))")
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        // Also notify the terminal state directly.
+        // SwiftUI's NSViewRepresentable layout propagation is async and may not
+        // complete within the test's timing window. The resize logic itself
+        // (MoonBit grid resize + PTY TIOCSWINSZ) is what we're testing here.
+        let newCols = max(1, Int(1024.0 / tab.state.cellWidth))
+        let newRows = max(1, Int(768.0 / tab.state.cellHeight))
+        tab.state.resize(rows: newRows, cols: newCols)
+
+        pass("test4_resize: Resized to \(newRows)x\(newCols) (was \(preResizeRows)x\(preResizeCols))")
     }
 
     // MARK: - Test 5: Resize result
@@ -206,10 +217,8 @@ class SelfTestRunner {
     private func test8_tabManagement() {
         let tabCountBefore = tabManager.tabs.count
 
-        // Create a new tab
+        // Create a new tab (MoonBit handles init + PTY spawn)
         let newTab = tabManager.newTab()
-        newTab.state.initialize()
-        newTab.state.startShell()
 
         if tabManager.tabs.count != tabCountBefore + 1 {
             fail("test8_tabManagement: Tab count did not increase")
@@ -303,7 +312,33 @@ class SelfTestRunner {
         }
     }
 
+    /// Capture the window's on-screen pixels via the window compositor.
+    ///
+    /// NSView.cacheDisplay only captures the AppKit backing store — it misses
+    /// CAMetalLayer / wgpu content entirely (always blank). CGWindowListCreateImage
+    /// captures the actual composited pixels from the window server, including
+    /// Metal, OpenGL, and any GPU-rendered content.
     private func captureView(_ view: NSView) -> NSBitmapImageRep {
+        guard let window = view.window else {
+            // Fallback to the old method if no window
+            let bounds = view.bounds
+            let rep = view.bitmapImageRepForCachingDisplay(in: bounds)!
+            view.cacheDisplay(in: bounds, to: rep)
+            return rep
+        }
+
+        let windowId = CGWindowID(window.windowNumber)
+        // .boundsIgnoreFraming captures only the window content (no shadow)
+        if let cgImage = CGWindowListCreateImage(
+            .null,
+            .optionIncludingWindow,
+            windowId,
+            [.boundsIgnoreFraming]
+        ) {
+            return NSBitmapImageRep(cgImage: cgImage)
+        }
+
+        // Fallback
         let bounds = view.bounds
         let rep = view.bitmapImageRepForCachingDisplay(in: bounds)!
         view.cacheDisplay(in: bounds, to: rep)

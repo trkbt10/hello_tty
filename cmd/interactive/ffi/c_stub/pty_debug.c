@@ -49,9 +49,11 @@ int hello_tty_run_interactive_c(void) {
         sigemptyset(&empty);
         sigprocmask(SIG_SETMASK, &empty, NULL);
 
+        // Debug-only: hardcoded defaults (this is a standalone C test, not production)
         struct winsize ws = { .ws_row = 24, .ws_col = 80 };
         ioctl(STDIN_FILENO, TIOCSWINSZ, &ws);
-        setenv("TERM", "xterm-256color", 1);
+        // TERM should be set by caller; debug fallback only
+        if (!getenv("TERM")) setenv("TERM", "xterm-256color", 1);
         execl(shell, "-bash", (char *)NULL);
         _exit(127);
     }

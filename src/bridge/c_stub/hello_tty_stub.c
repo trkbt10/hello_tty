@@ -63,8 +63,8 @@ extern moonbit_bytes_t mbt_ffi_get_modes(void);
 extern moonbit_bytes_t mbt_ffi_focus_event(moonbit_bytes_t gained);
 extern int32_t         mbt_ffi_shutdown(void);
 
-// Session management
-extern int32_t         mbt_ffi_create_session(moonbit_bytes_t rows, moonbit_bytes_t cols);
+// Session management (create returns JSON bytes, not int)
+extern moonbit_bytes_t mbt_ffi_create_session(moonbit_bytes_t rows, moonbit_bytes_t cols);
 extern int32_t         mbt_ffi_destroy_session(moonbit_bytes_t id);
 extern int32_t         mbt_ffi_switch_session(moonbit_bytes_t id);
 extern moonbit_bytes_t mbt_ffi_list_sessions(void);
@@ -181,11 +181,12 @@ void hello_tty_free_string(char *str) {
 
 // ---------- Session Management ----------
 
-int32_t hello_tty_create_session(const char *rows, const char *cols) {
+char *hello_tty_create_session(const char *rows, const char *cols) {
     ensure_init();
     moonbit_bytes_t rb = cstr_to_moonbit_bytes(rows);
     moonbit_bytes_t cb = cstr_to_moonbit_bytes(cols);
-    return mbt_ffi_create_session(rb, cb);
+    moonbit_bytes_t result = mbt_ffi_create_session(rb, cb);
+    return moonbit_bytes_to_cstr(result);
 }
 
 int32_t hello_tty_destroy_session(const char *session_id) {

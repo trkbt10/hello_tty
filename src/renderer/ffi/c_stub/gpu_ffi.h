@@ -45,33 +45,8 @@ int hello_tty_gpu_atlas_upload(
     int x, int y, int region_w, int region_h,
     const uint8_t *data, int data_len);
 
-// ---------- Font rasterization ----------
-
-// Initialize the font engine with a font file or system font name.
-// font_path: UTF-8 path to .ttf/.otf file, or NULL for system monospace.
-// font_size: size in pixels.
-// Returns 0 on success, -1 on failure.
-int hello_tty_font_init(const char *font_path, int font_path_len, int font_size);
-
-// Rasterize a single glyph.
-// codepoint: Unicode code point.
-// bold, italic: style flags.
-// Outputs are written into the provided buffers:
-//   metrics_out[0] = width, [1] = height, [2] = bearing_x, [3] = bearing_y, [4] = advance
-//   bitmap_out: pre-allocated buffer for grayscale (A8) bitmap data.
-//   bitmap_max_len: max bytes in bitmap_out.
-// Returns actual bitmap size in bytes, or -1 on failure.
-int hello_tty_font_rasterize(
-    int codepoint, int bold, int italic,
-    int32_t *metrics_out,
-    uint8_t *bitmap_out, int bitmap_max_len);
-
-// Get font metrics (for cell size calculation).
-// metrics_out[0] = cell_width, [1] = cell_height, [2] = ascent, [3] = descent
-int hello_tty_font_get_metrics(int32_t *metrics_out);
-
-// Shut down the font engine.
-void hello_tty_font_shutdown(void);
+// Font rasterization is in src/font/ffi/c_stub/ (font_ffi.h).
+// Renderer does NOT own font — it consumes font via MoonBit @font package.
 
 // ---------- Per-frame rendering ----------
 

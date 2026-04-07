@@ -25,8 +25,10 @@ extern "C" {
 // Each session owns an independent terminal + parser.
 // Platform adapters (Swift TabManager) delegate here.
 
-// Create a new session. Returns session_id (> 0) on success.
-int32_t hello_tty_create_session(const char *rows, const char *cols);
+// Create a new session (terminal init + PTY spawn).
+// Returns JSON: {"id":N,"fd":N} where id=session_id, fd=PTY master fd.
+// Caller must free the returned string.
+char *hello_tty_create_session(const char *rows, const char *cols);
 
 // Destroy a session by ID. Returns 0 on success.
 int32_t hello_tty_destroy_session(const char *session_id);

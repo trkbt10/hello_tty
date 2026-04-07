@@ -60,7 +60,12 @@ pub(all) struct RasterizedGlyph {
 
 ///|
 /// Configuration for the font engine.
+///
+/// All policy decisions (font name, size, atlas size) are made in MoonBit.
+/// The FFI layer receives these as parameters — it does not choose defaults.
 pub(all) struct FontConfig {
+  /// Font name (e.g. "Menlo", "DejaVu Sans Mono") or empty for system default.
+  font_name : String
   /// Font size in pixels.
   font_size : Int
   /// Initial atlas texture dimensions.
@@ -69,5 +74,5 @@ pub(all) struct FontConfig {
 
 ///|
 pub fn FontConfig::default() -> FontConfig {
-  { font_size: 26, atlas_size: 1024 }
+  { font_name: "Menlo", font_size: 26, atlas_size: 1024 }
 }

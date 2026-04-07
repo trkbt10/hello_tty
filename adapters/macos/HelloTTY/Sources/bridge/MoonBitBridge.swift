@@ -32,7 +32,7 @@ class MoonBitBridge {
     private typealias ClassifyKeyFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
 
     // Session management
-    private typealias CreateSessionFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
+    private typealias CreateSessionFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
     private typealias DestroySessionFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
     private typealias SwitchSessionFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
     private typealias ListSessionsFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
@@ -381,12 +381,29 @@ class MoonBitBridge {
 
     // MARK: - Session Management (MoonBit SoT)
 
-    /// Create a new session. Returns session_id (> 0) on success.
-    func createSession(rows: Int = 24, cols: Int = 80) -> Int32 {
-        guard let fn = fnCreateSession else { return -1 }
-        return "\(rows)".withCString { r in
+    struct CreateSessionResult {
+        let sessionId: Int32
+        let masterFd: Int32
+    }
+
+    /// Create a new session (terminal init + PTY spawn in MoonBit).
+    /// Returns (sessionId, masterFd). Shell path resolved by MoonBit from $SHELL.
+    func createSession(rows: Int = 24, cols: Int = 80) -> CreateSessionResult? {
+        guard let fn = fnCreateSession else { return nil }
+        let ptr = "\(rows)".withCString { r in
             "\(cols)".withCString { c in fn(r, c) }
         }
+        guard let ptr = ptr else { return nil }
+        defer { fnFreeString?(ptr) }
+        let jsonStr = String(cString: ptr)
+
+        guard let data = jsonStr.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = obj["id"] as? Int,
+              let fd = obj["fd"] as? Int
+        else { return nil }
+
+        return CreateSessionResult(sessionId: Int32(id), masterFd: Int32(fd))
     }
 
     /// Destroy a session by ID.

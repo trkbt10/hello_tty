@@ -33,31 +33,11 @@ typedef struct {
 
 static FontState g_font = {0};
 
-// ---------- Helpers ----------
-
-// Get the system monospace font name.
-static CFStringRef get_monospace_font_name(void) {
-    // Try common monospace fonts in preference order
-    CFStringRef candidates[] = {
-        CFSTR("Menlo"),
-        CFSTR("Monaco"),
-        CFSTR("SF Mono"),
-        CFSTR("Courier New"),
-    };
-    int count = sizeof(candidates) / sizeof(candidates[0]);
-    for (int i = 0; i < count; i++) {
-        CTFontRef test = CTFontCreateWithName(candidates[i], 14.0, NULL);
-        if (test) {
-            CFRelease(test);
-            return candidates[i];
-        }
-    }
-    return CFSTR("Menlo"); // Fallback
-}
-
 // ---------- Public API ----------
 
-int hello_tty_font_init(const char *font_path, int font_path_len, int font_size) {
+// font_name_or_path: font name (e.g. "Menlo") or file path (if contains '/').
+// MoonBit decides what to pass — C just does what it's told.
+int hello_tty_font_init(const char *font_name_or_path, int name_len, int font_size) {
     if (g_font.initialized) {
         hello_tty_font_shutdown();
     }
@@ -65,42 +45,55 @@ int hello_tty_font_init(const char *font_path, int font_path_len, int font_size)
     g_font.font_size = font_size;
     CGFloat size = (CGFloat)font_size;
 
-    if (font_path != NULL && font_path_len > 0) {
-        // Load font from file path
-        CFStringRef path_str = CFStringCreateWithBytes(
-            kCFAllocatorDefault, (const UInt8 *)font_path, font_path_len,
+    if (font_name_or_path != NULL && name_len > 0) {
+        CFStringRef name_str = CFStringCreateWithBytes(
+            kCFAllocatorDefault, (const UInt8 *)font_name_or_path, name_len,
             kCFStringEncodingUTF8, false);
-        if (!path_str) return -1;
+        if (!name_str) return -1;
 
-        CFURLRef url = CFURLCreateWithFileSystemPath(
-            kCFAllocatorDefault, path_str, kCFURLPOSIXPathStyle, false);
-        CFRelease(path_str);
-        if (!url) return -1;
+        // Check if it looks like a file path
+        int is_path = 0;
+        for (int i = 0; i < name_len; i++) {
+            if (font_name_or_path[i] == '/') { is_path = 1; break; }
+        }
 
-        CGDataProviderRef provider = CGDataProviderCreateWithURL(url);
-        CFRelease(url);
-        if (!provider) return -1;
+        if (is_path) {
+            // Load font from file path
+            CFURLRef url = CFURLCreateWithFileSystemPath(
+                kCFAllocatorDefault, name_str, kCFURLPOSIXPathStyle, false);
+            CFRelease(name_str);
+            if (!url) return -1;
 
-        CGFontRef cg_font = CGFontCreateWithDataProvider(provider);
-        CGDataProviderRelease(provider);
-        if (!cg_font) return -1;
+            CGDataProviderRef provider = CGDataProviderCreateWithURL(url);
+            CFRelease(url);
+            if (!provider) return -1;
 
-        g_font.font = CTFontCreateWithGraphicsFont(cg_font, size, NULL, NULL);
-        CGFontRelease(cg_font);
+            CGFontRef cg_font = CGFontCreateWithDataProvider(provider);
+            CGDataProviderRelease(provider);
+            if (!cg_font) return -1;
+
+            g_font.font = CTFontCreateWithGraphicsFont(cg_font, size, NULL, NULL);
+            CGFontRelease(cg_font);
+        } else {
+            // Font name — use CTFontCreateWithName
+            g_font.font = CTFontCreateWithName(name_str, size, NULL);
+            CFRelease(name_str);
+        }
     } else {
-        // Use system monospace font
-        CFStringRef font_name = get_monospace_font_name();
-        g_font.font = CTFontCreateWithName(font_name, size, NULL);
+        // Empty name — use system default monospace font (no policy here,
+        // MoonBit should always provide a name; this is just a safety net)
+        g_font.font = CTFontCreateUIFontForLanguage(kCTFontUIFontUserFixedPitch, size, NULL);
     }
 
     if (!g_font.font) return -1;
 
-    // Create bold variant
+    // Create bold variant via system trait resolution
     CTFontSymbolicTraits bold_traits = kCTFontBoldTrait;
     g_font.bold_font = CTFontCreateCopyWithSymbolicTraits(
         g_font.font, size, NULL, bold_traits, bold_traits);
     if (!g_font.bold_font) {
-        // Fallback: use regular font for bold
+        // System has no bold variant — reuse regular (MoonBit asked for bold,
+        // platform can't provide it, this is a platform constraint, not policy)
         g_font.bold_font = (CTFontRef)CFRetain(g_font.font);
     }
 

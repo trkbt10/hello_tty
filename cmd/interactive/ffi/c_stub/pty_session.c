@@ -58,8 +58,7 @@ int hello_tty_pty_session_start(
     #include <spawn.h>
     extern char **environ;
 
-    // Set TERM in environment
-    setenv("TERM", "xterm-256color", 1);
+    // TERM env var is set by MoonBit before calling this.
 
     posix_spawn_file_actions_t file_actions;
     posix_spawn_file_actions_init(&file_actions);

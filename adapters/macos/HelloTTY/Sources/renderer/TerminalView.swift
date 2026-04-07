@@ -85,7 +85,6 @@ class TerminalState: ObservableObject {
     var font: NSFont
 
     private var masterFd: Int32 = -1
-    private var childPid: Int32 = 0
     private var ptyThread: Thread?
     private var running = false
 
@@ -111,30 +110,28 @@ class TerminalState: ObservableObject {
         cellHeight = ceil(ascent + descent + leading)
     }
 
-    func initialize(rows: Int = 24, cols: Int = 80) {
-        currentRows = rows
-        currentCols = cols
-        _ = bridge.initialize(rows: rows, cols: cols)
-    }
-
-    func startShell(shell: String = "/bin/zsh") {
-        let rows = currentRows
-        let cols = currentCols
-        guard let result = bridge.ptyStart(shell: shell, rows: rows, cols: cols) else {
-            NSLog("hello_tty: failed to start PTY session")
-            return
-        }
-        masterFd = result.masterFd
-        childPid = result.pid
+    /// Start the PTY I/O read loop with an already-spawned master_fd.
+    /// The PTY was spawned by MoonBit (SessionManager) — Swift only drives I/O.
+    func startPtyLoop(masterFd: Int32) {
+        self.masterFd = masterFd
         running = true
-        NSLog("hello_tty: PTY started, master_fd=%d pid=%d rows=%d cols=%d",
-              masterFd, childPid, rows, cols)
+        NSLog("hello_tty: PTY loop started, master_fd=%d", masterFd)
 
         ptyThread = Thread {
             self.ptyReadLoop()
         }
         ptyThread?.name = "hello_tty.pty_reader"
         ptyThread?.start()
+    }
+
+    /// Stop the PTY I/O loop.
+    func stopPtyLoop() {
+        running = false
+        if masterFd >= 0 {
+            // PTY fd is owned by MoonBit Session — don't close here.
+            // MoonBit's destroy_session handles cleanup.
+            masterFd = -1
+        }
     }
 
     /// Background PTY read loop.
@@ -201,15 +198,6 @@ class TerminalState: ObservableObject {
             bridge.ptyResize(masterFd: masterFd, rows: rows, cols: cols)
         }
         refresh()
-    }
-
-    func shutdown() {
-        running = false
-        if masterFd >= 0 {
-            bridge.ptyClose(masterFd: masterFd)
-            masterFd = -1
-        }
-        bridge.shutdown()
     }
 }
 

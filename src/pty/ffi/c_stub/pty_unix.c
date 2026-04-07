@@ -90,8 +90,7 @@ int hello_tty_pty_fork_exec(const unsigned char *shell, int shell_len,
   ws.ws_col = (unsigned short)cols;
   ioctl(slave_fd, TIOCSWINSZ, &ws);
 
-  // Set TERM
-  setenv("TERM", "xterm-256color", 1);
+  // TERM env var is set by MoonBit before calling this.
 
   // Configure posix_spawn file actions
   posix_spawn_file_actions_t file_actions;
@@ -212,8 +211,7 @@ void hello_tty_pty_exec_shell(const unsigned char *shell, int shell_len) {
   signal(SIGTERM, SIG_DFL);
   signal(SIGALRM, SIG_DFL);
 
-  // Set TERM environment variable
-  setenv("TERM", "xterm-256color", 1);
+  // TERM env var is set by MoonBit before calling this.
 
   // Execute the shell as a login shell
   // Convention: prefix argv[0] with '-' to indicate login shell
