@@ -1,8 +1,8 @@
 options(
   "native-stub": [
-    "c_stub/font_coretext.c",
-    "c_stub/font_freetype.c",
-    "c_stub/font_stub.c",
+    "c_stub/macos/font_coretext.c",
+    "c_stub/linux/font_freetype.c",
+    "c_stub/stub/font_stub.c",
   ],
   targets: {
     "ffi.mbt": [ "native" ],

@@ -9,7 +9,7 @@
 // When building directly via moon build, stub implementations are used.
 #if defined(__APPLE__) && defined(HELLO_TTY_PLATFORM_MACOS)
 
-#include "font_ffi.h"
+#include "../font_ffi.h"
 
 #include <CoreText/CoreText.h>
 #include <CoreGraphics/CoreGraphics.h>

@@ -5,7 +5,7 @@
 
 #if defined(__linux__)
 
-#include "font_ffi.h"
+#include "../font_ffi.h"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H

@@ -64,8 +64,11 @@ GPU_STUB_DIR  := src/renderer/ffi/c_stub
 # Font C stubs (separate from renderer — font is its own SoT)
 FONT_STUB_DIR := src/font/ffi/c_stub
 
+# PTY C stubs
+PTY_FFI_STUB_DIR := src/pty/ffi/c_stub
+
 CC            := clang
-CFLAGS        := -I$(MOON_INCLUDE) -I$(C_STUB_DIR) -I$(WGPU_INCLUDE) -I$(WGPU_INCLUDE)/webgpu -I$(WGPU_INCLUDE)/wgpu -I$(GPU_STUB_DIR) -I$(FONT_STUB_DIR) \
+CFLAGS        := -I$(MOON_INCLUDE) -I$(C_STUB_DIR) -I$(WGPU_INCLUDE) -I$(WGPU_INCLUDE)/webgpu -I$(WGPU_INCLUDE)/wgpu -I$(GPU_STUB_DIR) -I$(FONT_STUB_DIR) -I$(PTY_FFI_STUB_DIR) \
                  -fPIC -g -O2 -fwrapv -fno-strict-aliasing -Wno-unused-value
 DYLIB_FLAGS   := -dynamiclib -install_name @rpath/libhello_tty.dylib
 
@@ -167,11 +170,11 @@ dylib: build vendor-wgpu
 		-o $(DYLIB) \
 		$(BRIDGE_C) \
 		$(C_STUB_SRC) \
-		$(C_STUB_DIR)/hello_tty_pty.c \
+		$(C_STUB_DIR)/unix/hello_tty_pty.c \
 		$(SYS_STUB) \
 		$(GPU_STUB_DIR)/gpu_wgpu.c \
 		$(GPU_STUB_DIR)/gpu_moonbit_glue.c \
-		$(FONT_STUB_DIR)/font_coretext.c \
+		$(FONT_STUB_DIR)/macos/font_coretext.c \
 		$(WGPU_LIB) \
 		$(MOON_RUNLIB) \
 		$(MOON_RUNTIME) \

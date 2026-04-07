@@ -6,7 +6,7 @@
 
 #ifndef _WIN32
 
-#include "pty_ffi.h"
+#include "../pty_ffi.h"
 
 #include <stdlib.h>
 #include <string.h>

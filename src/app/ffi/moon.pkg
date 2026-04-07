@@ -1,4 +1,4 @@
 options(
-  "native-stub": [ "c_stub/spawn_ffi.c" ],
+  "native-stub": [ "c_stub/unix/spawn_ffi.c" ],
   targets: { "ffi.mbt": [ "native" ] },
 )

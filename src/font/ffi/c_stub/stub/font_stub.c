@@ -2,7 +2,7 @@
 // The real implementations are in font_coretext.c (macOS) and font_freetype.c (Linux),
 // compiled only when building via the platform adapter Makefile.
 
-#include "font_ffi.h"
+#include "../font_ffi.h"
 
 // Only compile stubs when neither CoreText nor FreeType is enabled.
 #if !defined(HELLO_TTY_PLATFORM_MACOS) && !defined(__linux__)

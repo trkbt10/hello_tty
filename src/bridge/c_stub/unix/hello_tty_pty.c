@@ -5,7 +5,7 @@
 #ifndef _WIN32
 #define _GNU_SOURCE
 
-#include "hello_tty_core.h"
+#include "../hello_tty_core.h"
 
 #include <stdlib.h>
 #include <string.h>
