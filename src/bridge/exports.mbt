@@ -1,35 +1,31 @@
 ///|
-/// FFI exports for the macOS Swift adapter.
+/// FFI exports for platform adapters (macOS Swift, GTK, etc.).
 ///
-/// These functions are called by the Swift UI layer via C ABI (dlopen/dlsym).
-/// They operate on a global terminal state singleton, serializing data as
-/// JSON strings for cross-language transport.
+/// These functions are called via C ABI (dlopen/dlsym).
+/// They operate on a session-based architecture:
+///   - SessionManager owns all terminal sessions
+///   - Theme is the SoT for color resolution
+///   - Colors are fully resolved before crossing FFI boundary
 ///
 /// Following bartleby's pattern:
-///   Swift → dlsym("hello_tty_*") → C stub → mangled MoonBit export
+///   Swift -> dlsym("hello_tty_*") -> C stub -> mangled MoonBit export
 
 ///|
-/// Global application state.
+/// Global bridge state.
 struct BridgeState {
-  mut terminal : @terminal.Terminal?
-  mut parser : @vt_parser.Parser?
+  sessions : @session.SessionManager
+  theme : @theme.Theme
   mut renderer : @renderer.Renderer?
   mut gpu_backend : @renderer.GpuBackend?
-  mut title : String
-  mut rows : Int
-  mut cols : Int
   mut initialized : Bool
 }
 
 ///|
 let bridge_state : BridgeState = {
-  terminal: None,
-  parser: None,
+  sessions: @session.SessionManager::new(),
+  theme: @theme.Theme::midnight(),
   renderer: None,
   gpu_backend: None,
-  title: "",
-  rows: 24,
-  cols: 80,
   initialized: false,
 }
 
@@ -42,31 +38,80 @@ struct ResultBuf {
 ///|
 let result_buf : ResultBuf = { result_bytes: Bytes::new(0) }
 
+// ========== Session Management ==========
+
 ///|
-/// Initialize the terminal state.
-/// Returns 0 on success.
-pub fn ffi_init(rows_bytes : Bytes, cols_bytes : Bytes) -> Int {
+/// Create a new session. Returns the session ID (> 0) on success, -1 on failure.
+pub fn ffi_create_session(rows_bytes : Bytes, cols_bytes : Bytes) -> Int {
   let rows = bytes_to_int(rows_bytes, 24)
   let cols = bytes_to_int(cols_bytes, 80)
-  bridge_state.terminal = Some(@terminal.Terminal::new(rows~, cols~))
-  bridge_state.parser = Some(@vt_parser.Parser::new())
-  bridge_state.rows = rows
-  bridge_state.cols = cols
-  bridge_state.title = ""
   bridge_state.initialized = true
+  bridge_state.sessions.create_session(rows, cols)
+}
+
+///|
+/// Destroy a session by ID. Returns 0 on success.
+pub fn ffi_destroy_session(id_bytes : Bytes) -> Int {
+  let id = bytes_to_int(id_bytes, -1)
+  bridge_state.sessions.destroy_session(id)
   0
 }
 
 ///|
-/// Feed PTY output bytes into the parser and terminal.
+/// Switch active session. Returns 0 on success, -1 if session not found.
+pub fn ffi_switch_session(id_bytes : Bytes) -> Int {
+  let id = bytes_to_int(id_bytes, -1)
+  if bridge_state.sessions.switch_to(id) { 0 } else { -1 }
+}
+
+///|
+/// List all sessions as JSON: [{"id":1,"title":"zsh","active":true}, ...]
+pub fn ffi_list_sessions() -> Bytes {
+  let sessions = bridge_state.sessions.list_sessions()
+  let arr : Array[Json] = []
+  for item in sessions {
+    let (id, title, active) = item
+    let m : Map[String, Json] = {
+      "id": id.to_json(),
+      "title": title.to_json(),
+      "active": active.to_json(),
+    }
+    arr.push(m.to_json())
+  }
+  result_buf.result_bytes = @utf8.encode(arr.to_json().stringify())
+  result_buf.result_bytes
+}
+
+///|
+/// Get the active session ID. Returns -1 if no sessions.
+pub fn ffi_get_active_session() -> Int {
+  bridge_state.sessions.get_active_id()
+}
+
+// ========== Legacy single-session API (operates on active session) ==========
+
+///|
+/// Initialize the terminal state (legacy — creates a session if none exists).
+/// Returns 0 on success.
+pub fn ffi_init(rows_bytes : Bytes, cols_bytes : Bytes) -> Int {
+  let rows = bytes_to_int(rows_bytes, 24)
+  let cols = bytes_to_int(cols_bytes, 80)
+  bridge_state.initialized = true
+  // Create a session if none exists
+  if bridge_state.sessions.count() == 0 {
+    bridge_state.sessions.create_session(rows, cols) |> ignore
+  }
+  0
+}
+
+///|
+/// Feed PTY output bytes into the active session's parser and terminal.
 /// Returns 0 on success.
 pub fn ffi_process_output(data : Bytes) -> Int {
-  match (bridge_state.terminal, bridge_state.parser) {
-    (Some(terminal), Some(parser)) => {
+  match bridge_state.sessions.active_session() {
+    Some(session) => {
       let s = bytes_to_string(data)
-      let events = parser.feed_str(s)
-      terminal.handle_events(events)
-      bridge_state.title = terminal.get_title()
+      session.process_output(s)
       0
     }
     _ => -1
@@ -74,19 +119,14 @@ pub fn ffi_process_output(data : Bytes) -> Int {
 }
 
 ///|
-/// Handle a key input event.
+/// Handle a key input event on the active session.
 /// Returns the bytes to send to the PTY (escape sequence), or empty on error.
 pub fn ffi_handle_key(key_code_bytes : Bytes, modifiers_bytes : Bytes) -> Bytes {
-  match bridge_state.terminal {
-    Some(terminal) => {
+  match bridge_state.sessions.active_session() {
+    Some(session) => {
       let key_code = bytes_to_int(key_code_bytes, 0)
       let modifiers = bytes_to_int(modifiers_bytes, 0)
-      let modes = terminal.get_modes()
-      let result = @input.translate_key_input(
-        key_code,
-        modifiers,
-        modes.cursor_keys_application,
-      )
+      let result = session.handle_key(key_code, modifiers)
       result_buf.result_bytes = @utf8.encode(result)
       result_buf.result_bytes
     }
@@ -95,15 +135,13 @@ pub fn ffi_handle_key(key_code_bytes : Bytes, modifiers_bytes : Bytes) -> Bytes 
 }
 
 ///|
-/// Resize the terminal. Returns 0 on success.
+/// Resize the active session's terminal. Returns 0 on success.
 pub fn ffi_resize(rows_bytes : Bytes, cols_bytes : Bytes) -> Int {
-  match bridge_state.terminal {
-    Some(terminal) => {
+  match bridge_state.sessions.active_session() {
+    Some(session) => {
       let rows = bytes_to_int(rows_bytes, 24)
       let cols = bytes_to_int(cols_bytes, 80)
-      terminal.resize(rows, cols)
-      bridge_state.rows = rows
-      bridge_state.cols = cols
+      session.resize(rows, cols)
       0
     }
     None => -1
@@ -111,11 +149,11 @@ pub fn ffi_resize(rows_bytes : Bytes, cols_bytes : Bytes) -> Int {
 }
 
 ///|
-/// Get the terminal title (set via OSC 0/2).
+/// Get the active session's terminal title.
 pub fn ffi_get_title() -> Bytes {
-  match bridge_state.terminal {
-    Some(terminal) => {
-      result_buf.result_bytes = @utf8.encode(terminal.get_title())
+  match bridge_state.sessions.active_session() {
+    Some(session) => {
+      result_buf.result_bytes = @utf8.encode(session.get_title())
       result_buf.result_bytes
     }
     None => Bytes::new(0)
@@ -124,13 +162,15 @@ pub fn ffi_get_title() -> Bytes {
 
 ///|
 /// Get the visible terminal grid as a JSON string.
-/// Uses the standard Json type with ToJson for correct serialization.
+/// Colors are FULLY RESOLVED using the theme — platform adapters receive
+/// only concrete RGB values, never palette indices or "default" markers.
 pub fn ffi_get_grid() -> Bytes {
-  match bridge_state.terminal {
-    Some(terminal) => {
+  match bridge_state.sessions.active_session() {
+    Some(session) => {
+      let terminal = session.get_terminal()
       let grid = terminal.get_grid()
       let cursor = terminal.get_cursor()
-      // Build via Map → .to_json() → .stringify()
+      let theme = bridge_state.theme
       let cursor_map : Map[String, Json] = {
         "row": cursor.row.to_json(),
         "col": cursor.col.to_json(),
@@ -141,7 +181,6 @@ pub fn ffi_get_grid() -> Bytes {
             Bar => "bar"
           }).to_json(),
       }
-      // Non-empty cells
       let cells_arr : Array[Json] = []
       for row in 0..<grid.rows {
         let line = grid.lines[row]
@@ -150,13 +189,24 @@ pub fn ffi_get_grid() -> Bytes {
           if cell.char == '\u0000' {
             continue
           }
+          // Resolve colors using theme (SoT)
+          let mut fg_color = cell.fg
+          let mut bg_color = cell.bg
+          if cell.attrs.has(@terminal.attr_inverse) {
+            let tmp = fg_color
+            fg_color = bg_color
+            bg_color = tmp
+          }
+          let resolved_fg = theme.resolve_color(fg_color, true)
+          let resolved_bg = theme.resolve_color(bg_color, false)
           let cell_map : Map[String, Json] = {
             "r": row.to_json(),
             "c": col.to_json(),
             "ch": cell.char.to_string().to_json(),
-            "fg": color_to_json_fg(cell.fg),
-            "bg": color_to_json_bg(cell.bg),
+            "fg": rgba_to_json(resolved_fg),
+            "bg": rgba_to_json(resolved_bg),
             "a": cell.attrs.flags.to_json(),
+            "w": cell.width.to_json(),
           }
           cells_arr.push(cell_map.to_json())
         }
@@ -177,9 +227,9 @@ pub fn ffi_get_grid() -> Bytes {
 ///|
 /// Get the terminal modes as a JSON string.
 pub fn ffi_get_modes() -> Bytes {
-  match bridge_state.terminal {
-    Some(terminal) => {
-      let modes = terminal.get_modes()
+  match bridge_state.sessions.active_session() {
+    Some(session) => {
+      let modes = session.get_terminal().get_modes()
       let modes_map : Map[String, Json] = {
         "cursor_keys_app": modes.cursor_keys_application.to_json(),
         "reverse_video": modes.reverse_video.to_json(),
@@ -200,9 +250,9 @@ pub fn ffi_get_modes() -> Bytes {
 ///|
 /// Get focus event escape sequence (for focus tracking mode).
 pub fn ffi_focus_event(gained_bytes : Bytes) -> Bytes {
-  match bridge_state.terminal {
-    Some(terminal) => {
-      let modes = terminal.get_modes()
+  match bridge_state.sessions.active_session() {
+    Some(session) => {
+      let modes = session.get_terminal().get_modes()
       if !modes.focus_tracking {
         return Bytes::new(0)
       }
@@ -215,23 +265,19 @@ pub fn ffi_focus_event(gained_bytes : Bytes) -> Bytes {
   }
 }
 
+// ========== GPU Rendering ==========
+
 ///|
 /// Initialize the GPU rendering backend.
-/// surface_handle_lo/hi: CAMetalLayer* split into two 32-bit halves.
-/// width, height: framebuffer pixel dimensions.
-/// Returns 0 on success.
 pub fn ffi_gpu_init(
   surface_bytes : Bytes,
   width_bytes : Bytes,
-  height_bytes : Bytes
+  height_bytes : Bytes,
 ) -> Int {
   let surface_handle = bytes_to_int(surface_bytes, 0)
   let width = bytes_to_int(width_bytes, 0)
   let height = bytes_to_int(height_bytes, 0)
-  // Configure renderer with terminal-appropriate defaults:
-  // - Dark background (matching midnight theme)
-  // - Light foreground
-  // - DPI scale from pixel width / approximate point width
+  let theme = bridge_state.theme
   let font_config : @font.FontConfig = { font_size: 26, atlas_size: 1024 }
   let font_engine = @font.FontEngine::new(config=font_config)
   let render_config : @renderer.RendererConfig = {
@@ -240,8 +286,8 @@ pub fn ffi_gpu_init(
     font_size: 26,
     dpi_scale: 2.0,
     atlas_size: 1024,
-    default_fg: @renderer.RgbaColor::opaque(b'\xE6', b'\xE6', b'\xE6'),
-    default_bg: @renderer.RgbaColor::opaque(b'\x14', b'\x14', b'\x1A'),
+    default_fg: renderer_color(theme.fg),
+    default_bg: renderer_color(theme.bg),
   }
   let renderer = @renderer.Renderer::new(config=render_config)
   let gpu = @renderer.GpuBackend::new(config=render_config, font=font_engine)
@@ -257,13 +303,10 @@ pub fn ffi_gpu_init(
 
 ///|
 /// Render the current terminal state to the GPU.
-/// This is the single call Swift needs for drawing — all rendering logic
-/// (glyph atlas, vertex generation, color resolution) runs in MoonBit.
-/// Returns 0 on success.
 pub fn ffi_render_frame() -> Int {
-  match (bridge_state.terminal, bridge_state.renderer, bridge_state.gpu_backend) {
-    (Some(terminal), Some(renderer), Some(gpu)) => {
-      let commands = renderer.render(terminal)
+  match (bridge_state.sessions.active_session(), bridge_state.renderer, bridge_state.gpu_backend) {
+    (Some(session), Some(renderer), Some(gpu)) => {
+      let commands = renderer.render(session.get_terminal())
       try {
         gpu.execute_frame!(commands)
         0
@@ -277,7 +320,6 @@ pub fn ffi_render_frame() -> Int {
 
 ///|
 /// Resize the GPU surface.
-/// Returns 0 on success.
 pub fn ffi_gpu_resize(width_bytes : Bytes, height_bytes : Bytes) -> Int {
   let width = bytes_to_int(width_bytes, 0)
   let height = bytes_to_int(height_bytes, 0)
@@ -293,20 +335,7 @@ pub fn ffi_gpu_resize(width_bytes : Bytes, height_bytes : Bytes) -> Int {
   }
 }
 
-///|
-/// Shut down the terminal state.
-pub fn ffi_shutdown() -> Int {
-  if bridge_state.gpu_backend is Some(gpu) {
-    gpu.shutdown()
-  }
-  bridge_state.gpu_backend = None
-  bridge_state.renderer = None
-  bridge_state.terminal = None
-  bridge_state.parser = None
-  bridge_state.initialized = false
-  bridge_state.title = ""
-  0
-}
+// ========== Input Classification ==========
 
 ///|
 /// Classify a key event — SoT for input routing decisions.
@@ -327,7 +356,42 @@ pub fn ffi_classify_key(
   }
 }
 
-// ---------- Helpers ----------
+// ========== Theme ==========
+
+///|
+/// Get theme info as JSON (for platform adapter configuration).
+/// Includes is_dark, bg_alpha, and key colors as RGB arrays.
+pub fn ffi_get_theme() -> Bytes {
+  let theme = bridge_state.theme
+  let theme_map : Map[String, Json] = {
+    "name": theme.name.to_json(),
+    "is_dark": theme.is_dark().to_json(),
+    "bg_alpha": theme.bg_alpha.to_double().to_json(),
+    "fg": rgba_to_json(theme.fg),
+    "bg": rgba_to_json(theme.bg),
+    "cursor": rgba_to_json(theme.cursor),
+    "selection": rgba_to_json(theme.selection),
+  }
+  result_buf.result_bytes = @utf8.encode(theme_map.to_json().stringify())
+  result_buf.result_bytes
+}
+
+// ========== Shutdown ==========
+
+///|
+/// Shut down all sessions and resources.
+pub fn ffi_shutdown() -> Int {
+  if bridge_state.gpu_backend is Some(gpu) {
+    gpu.shutdown()
+  }
+  bridge_state.gpu_backend = None
+  bridge_state.renderer = None
+  bridge_state.sessions.destroy_all()
+  bridge_state.initialized = false
+  0
+}
+
+// ========== Helpers ==========
 
 ///|
 fn bytes_to_string(data : Bytes) -> String {
@@ -339,8 +403,17 @@ fn bytes_to_int(data : Bytes, default_ : Int) -> Int {
   let s = bytes_to_string(data)
   let mut result = 0
   let mut has_digit = false
+  let mut negative = false
+  let mut first = true
   for c in s {
     let code = c.to_int()
+    if first && code == 0x2D {
+      // '-'
+      negative = true
+      first = false
+      continue
+    }
+    first = false
     if code >= 0x30 && code <= 0x39 {
       result = result * 10 + (code - 0x30)
       has_digit = true
@@ -349,32 +422,20 @@ fn bytes_to_int(data : Bytes, default_ : Int) -> Int {
     }
   }
   if has_digit {
-    result
+    if negative { -result } else { result }
   } else {
     default_
   }
 }
 
 ///|
-/// Encode foreground color to JSON.
-/// Default fg → null (let the UI theme decide).
-fn color_to_json_fg(color : @terminal.Color) -> Json {
-  match color {
-    Default => Json::null()
-    Indexed(idx) => [idx].to_json()
-    Palette(idx) => [idx].to_json()
-    Rgb(r, g, b) => [r.to_int(), g.to_int(), b.to_int()].to_json()
-  }
+/// Encode a theme RgbaColor to JSON as [r, g, b] (0-255).
+fn rgba_to_json(color : @theme.RgbaColor) -> Json {
+  [color.r.to_int(), color.g.to_int(), color.b.to_int()].to_json()
 }
 
 ///|
-/// Encode background color to JSON.
-/// Default bg → null (let the UI theme decide).
-fn color_to_json_bg(color : @terminal.Color) -> Json {
-  match color {
-    Default => Json::null()
-    Indexed(idx) => [idx].to_json()
-    Palette(idx) => [idx].to_json()
-    Rgb(r, g, b) => [r.to_int(), g.to_int(), b.to_int()].to_json()
-  }
+/// Convert theme RgbaColor to renderer RgbaColor.
+fn renderer_color(c : @theme.RgbaColor) -> @renderer.RgbaColor {
+  @renderer.RgbaColor::opaque(c.r, c.g, c.b)
 }

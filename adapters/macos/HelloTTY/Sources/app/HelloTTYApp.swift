@@ -109,7 +109,7 @@ struct GlassTabBarView: View {
                 GlassTabCapsule(
                     tab: tab,
                     isSelected: tabManager.selectedTabId == tab.id,
-                    onSelect: { tabManager.selectedTabId = tab.id },
+                    onSelect: { tabManager.selectTab(tab) },
                     onClose: { tabManager.closeTab(tab) }
                 )
             }

@@ -8,7 +8,7 @@
 // Returned strings MUST be freed by the caller via hello_tty_free_string().
 //
 // Following bartleby's FFI pattern:
-//   Swift → dlsym("hello_tty_*") → this C API → MoonBit exports
+//   Swift -> dlsym("hello_tty_*") -> this C API -> MoonBit exports
 
 #ifndef HELLO_TTY_CORE_H
 #define HELLO_TTY_CORE_H
@@ -19,20 +19,42 @@
 extern "C" {
 #endif
 
-// ---------- Lifecycle ----------
+// ---------- Session Management ----------
+//
+// Sessions are the MoonBit SoT for tab/window lifecycle.
+// Each session owns an independent terminal + parser.
+// Platform adapters (Swift TabManager) delegate here.
 
-// Initialize the terminal with the given dimensions.
+// Create a new session. Returns session_id (> 0) on success.
+int32_t hello_tty_create_session(const char *rows, const char *cols);
+
+// Destroy a session by ID. Returns 0 on success.
+int32_t hello_tty_destroy_session(const char *session_id);
+
+// Switch the active session. Returns 0 on success, -1 if not found.
+int32_t hello_tty_switch_session(const char *session_id);
+
+// List all sessions as JSON: [{"id":N,"title":"...","active":bool}, ...]
+// Caller must free the returned string.
+char *hello_tty_list_sessions(void);
+
+// Get the active session ID. Returns -1 if no sessions.
+int32_t hello_tty_get_active_session(void);
+
+// ---------- Legacy Lifecycle (operates on active session) ----------
+
+// Initialize terminal state. Creates a default session if none exists.
 // rows, cols: terminal grid size as decimal strings.
 // Returns 0 on success, -1 on failure.
 int32_t hello_tty_init(const char *rows, const char *cols);
 
-// Shut down the terminal state and free resources.
+// Shut down all sessions and free resources.
 // Returns 0 on success.
 int32_t hello_tty_shutdown(void);
 
-// ---------- Terminal I/O ----------
+// ---------- Terminal I/O (active session) ----------
 
-// Feed raw PTY output into the terminal parser.
+// Feed raw PTY output into the active session's terminal parser.
 // data: raw bytes from the shell process.
 // Returns 0 on success, -1 on failure.
 int32_t hello_tty_process_output(const char *data);
@@ -43,10 +65,11 @@ int32_t hello_tty_process_output(const char *data);
 // Returns the escape sequence string (caller must free), or NULL on error.
 char *hello_tty_handle_key(const char *key_code, const char *modifiers);
 
-// ---------- Terminal state ----------
+// ---------- Terminal State (active session) ----------
 
 // Get the current terminal grid as a JSON string.
-// Returns JSON with rows, cols, cursor, and non-empty cells.
+// Colors are FULLY RESOLVED as [r,g,b] arrays (0-255).
+// Platform adapters should NOT perform color resolution.
 // Caller must free the returned string.
 char *hello_tty_get_grid(void);
 
@@ -58,9 +81,9 @@ char *hello_tty_get_title(void);
 // Caller must free the returned string.
 char *hello_tty_get_modes(void);
 
-// ---------- Control ----------
+// ---------- Control (active session) ----------
 
-// Resize the terminal grid.
+// Resize the active session's terminal grid.
 // rows, cols: new dimensions as decimal strings.
 // Returns 0 on success.
 int32_t hello_tty_resize(const char *rows, const char *cols);
@@ -70,13 +93,20 @@ int32_t hello_tty_resize(const char *rows, const char *cols);
 // Returns escape sequence (caller must free), or NULL if focus tracking is off.
 char *hello_tty_focus_event(const char *gained);
 
-// ---------- Input classification (MoonBit SoT) ----------
+// ---------- Input Classification (MoonBit SoT) ----------
 
 // Classify a key event. Returns:
 //   0 = DirectToPty, 1 = ForwardToIme, 2 = ClipboardCopy, 3 = ClipboardPaste
 int32_t hello_tty_classify_key(const char *key_code, const char *modifiers, const char *has_marked_text);
 
-// ---------- GPU rendering (MoonBit pipeline) ----------
+// ---------- Theme (MoonBit SoT) ----------
+
+// Get theme configuration as JSON.
+// Includes: name, is_dark, bg_alpha, fg/bg/cursor/selection as [r,g,b].
+// Caller must free the returned string.
+char *hello_tty_get_theme(void);
+
+// ---------- GPU Rendering (MoonBit Pipeline) ----------
 
 // Initialize GPU backend via MoonBit renderer.
 // surface_handle: CAMetalLayer* (or 0) as decimal string.
@@ -85,8 +115,6 @@ int32_t hello_tty_classify_key(const char *key_code, const char *modifiers, cons
 int32_t hello_tty_gpu_init_bridge(const char *surface_handle, const char *width, const char *height);
 
 // Render the current terminal state to the GPU.
-// All rendering logic (glyph atlas, vertex generation, color resolution)
-// runs in MoonBit. Swift only needs to call this once per frame.
 // Returns 0 on success.
 int32_t hello_tty_render_frame(void);
 
@@ -94,7 +122,7 @@ int32_t hello_tty_render_frame(void);
 // width, height: new pixel dimensions as decimal strings.
 int32_t hello_tty_gpu_resize_bridge(const char *width, const char *height);
 
-// ---------- PTY session (posix_spawn, fork-safe) ----------
+// ---------- PTY Session (posix_spawn, fork-safe) ----------
 
 // Start a PTY session. Spawns a shell via posix_spawn (not fork).
 // shell: path to shell executable.

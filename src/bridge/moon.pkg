@@ -4,6 +4,8 @@ import {
   "trkbt10/hello_tty/src/font" @font,
   "trkbt10/hello_tty/src/input" @input,
   "trkbt10/hello_tty/src/renderer" @renderer,
+  "trkbt10/hello_tty/src/session" @session,
+  "trkbt10/hello_tty/src/theme" @theme,
   "moonbitlang/core/encoding/utf8" @utf8,
 }
 

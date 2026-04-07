@@ -31,6 +31,16 @@ class MoonBitBridge {
     // Input classification
     private typealias ClassifyKeyFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
 
+    // Session management
+    private typealias CreateSessionFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
+    private typealias DestroySessionFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+    private typealias SwitchSessionFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+    private typealias ListSessionsFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
+    private typealias GetActiveSessionFn = @convention(c) () -> Int32
+
+    // Theme
+    private typealias GetThemeFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
+
     // Font rasterization function types
     private typealias FontInitFn = @convention(c) (UnsafePointer<CChar>?, Int32, Int32) -> Int32
     private typealias FontRasterizeFn = @convention(c) (Int32, Int32, Int32, UnsafeMutablePointer<Int32>, UnsafeMutablePointer<UInt8>, Int32) -> Int32
@@ -65,6 +75,16 @@ class MoonBitBridge {
 
     // Input
     private var fnClassifyKey: ClassifyKeyFn?
+
+    // Session management
+    private var fnCreateSession: CreateSessionFn?
+    private var fnDestroySession: DestroySessionFn?
+    private var fnSwitchSession: SwitchSessionFn?
+    private var fnListSessions: ListSessionsFn?
+    private var fnGetActiveSession: GetActiveSessionFn?
+
+    // Theme
+    private var fnGetTheme: GetThemeFn?
 
     // Font
     private var fnFontInit: FontInitFn?
@@ -188,6 +208,16 @@ class MoonBitBridge {
         // Input
         fnClassifyKey = sym("hello_tty_classify_key")
 
+        // Session management
+        fnCreateSession = sym("hello_tty_create_session")
+        fnDestroySession = sym("hello_tty_destroy_session")
+        fnSwitchSession = sym("hello_tty_switch_session")
+        fnListSessions = sym("hello_tty_list_sessions")
+        fnGetActiveSession = sym("hello_tty_get_active_session")
+
+        // Theme
+        fnGetTheme = sym("hello_tty_get_theme")
+
         // Font
         fnFontInit = sym("hello_tty_font_init")
         fnFontRasterize = sym("hello_tty_font_rasterize")
@@ -235,12 +265,13 @@ class MoonBitBridge {
         return String(cString: ptr)
     }
 
-    func getGrid(theme: TerminalTheme = .midnight) -> TerminalGrid? {
+    /// Get the terminal grid. Colors are already fully resolved by MoonBit.
+    func getGrid() -> TerminalGrid? {
         guard let fn = fnGetGrid else { return nil }
         guard let ptr = fn() else { return nil }
         defer { fnFreeString?(ptr) }
         let jsonStr = String(cString: ptr)
-        return TerminalGrid.fromJSON(jsonStr, theme: theme)
+        return TerminalGrid.fromJSON(jsonStr)
     }
 
     func getTitle() -> String {
@@ -346,6 +377,99 @@ class MoonBitBridge {
             }
         }
         return KeyClassification(rawValue: result) ?? .forwardToIme
+    }
+
+    // MARK: - Session Management (MoonBit SoT)
+
+    /// Create a new session. Returns session_id (> 0) on success.
+    func createSession(rows: Int = 24, cols: Int = 80) -> Int32 {
+        guard let fn = fnCreateSession else { return -1 }
+        return "\(rows)".withCString { r in
+            "\(cols)".withCString { c in fn(r, c) }
+        }
+    }
+
+    /// Destroy a session by ID.
+    func destroySession(id: Int32) {
+        guard let fn = fnDestroySession else { return }
+        _ = "\(id)".withCString { fn($0) }
+    }
+
+    /// Switch active session.
+    func switchSession(id: Int32) -> Bool {
+        guard let fn = fnSwitchSession else { return false }
+        return "\(id)".withCString { fn($0) } == 0
+    }
+
+    struct SessionInfo {
+        let id: Int
+        let title: String
+        let isActive: Bool
+    }
+
+    /// List all sessions.
+    func listSessions() -> [SessionInfo] {
+        guard let fn = fnListSessions else { return [] }
+        guard let ptr = fn() else { return [] }
+        defer { fnFreeString?(ptr) }
+        let jsonStr = String(cString: ptr)
+
+        guard let data = jsonStr.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else { return [] }
+
+        return arr.compactMap { obj in
+            guard let id = obj["id"] as? Int,
+                  let title = obj["title"] as? String,
+                  let active = obj["active"] as? Bool
+            else { return nil }
+            return SessionInfo(id: id, title: title, isActive: active)
+        }
+    }
+
+    /// Get the active session ID (-1 if none).
+    func getActiveSessionId() -> Int32 {
+        guard let fn = fnGetActiveSession else { return -1 }
+        return fn()
+    }
+
+    // MARK: - Theme (MoonBit SoT)
+
+    struct ThemeInfo {
+        let name: String
+        let isDark: Bool
+        let bgAlpha: Double
+        let fg: (Int, Int, Int)
+        let bg: (Int, Int, Int)
+        let cursor: (Int, Int, Int)
+        let selection: (Int, Int, Int)
+    }
+
+    /// Get theme configuration from MoonBit.
+    func getTheme() -> ThemeInfo? {
+        guard let fn = fnGetTheme else { return nil }
+        guard let ptr = fn() else { return nil }
+        defer { fnFreeString?(ptr) }
+        let jsonStr = String(cString: ptr)
+
+        guard let data = jsonStr.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+
+        func parseRGB(_ value: Any?) -> (Int, Int, Int)? {
+            guard let arr = value as? [Int], arr.count == 3 else { return nil }
+            return (arr[0], arr[1], arr[2])
+        }
+
+        return ThemeInfo(
+            name: obj["name"] as? String ?? "Unknown",
+            isDark: obj["is_dark"] as? Bool ?? true,
+            bgAlpha: obj["bg_alpha"] as? Double ?? 1.0,
+            fg: parseRGB(obj["fg"]) ?? (230, 230, 230),
+            bg: parseRGB(obj["bg"]) ?? (20, 20, 26),
+            cursor: parseRGB(obj["cursor"]) ?? (102, 179, 255),
+            selection: parseRGB(obj["selection"]) ?? (64, 115, 191)
+        )
     }
 
     // MARK: - GPU Rendering (MoonBit Pipeline)

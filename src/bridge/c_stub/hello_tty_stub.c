@@ -16,6 +16,7 @@
 
 // ---------- Mangled MoonBit export names ----------
 
+// Legacy single-session API
 #define mbt_ffi_init              _M0FP47trkbt1010hello__tty3src6bridge9ffi__init
 #define mbt_ffi_process_output    _M0FP47trkbt1010hello__tty3src6bridge20ffi__process__output
 #define mbt_ffi_handle_key        _M0FP47trkbt1010hello__tty3src6bridge16ffi__handle__key
@@ -25,33 +26,60 @@
 #define mbt_ffi_get_modes         _M0FP47trkbt1010hello__tty3src6bridge15ffi__get__modes
 #define mbt_ffi_focus_event       _M0FP47trkbt1010hello__tty3src6bridge17ffi__focus__event
 #define mbt_ffi_shutdown          _M0FP47trkbt1010hello__tty3src6bridge13ffi__shutdown
+
+// Session management
+#define mbt_ffi_create_session    _M0FP47trkbt1010hello__tty3src6bridge20ffi__create__session
+#define mbt_ffi_destroy_session   _M0FP47trkbt1010hello__tty3src6bridge21ffi__destroy__session
+#define mbt_ffi_switch_session    _M0FP47trkbt1010hello__tty3src6bridge20ffi__switch__session
+#define mbt_ffi_list_sessions     _M0FP47trkbt1010hello__tty3src6bridge19ffi__list__sessions
+#define mbt_ffi_get_active_session _M0FP47trkbt1010hello__tty3src6bridge25ffi__get__active__session
+
+// GPU rendering
 #define mbt_ffi_gpu_init          _M0FP47trkbt1010hello__tty3src6bridge14ffi__gpu__init
 #define mbt_ffi_gpu_resize        _M0FP47trkbt1010hello__tty3src6bridge16ffi__gpu__resize
 #define mbt_ffi_render_frame      _M0FP47trkbt1010hello__tty3src6bridge18ffi__render__frame
+
+// Input classification
 #define mbt_ffi_classify_key      _M0FP47trkbt1010hello__tty3src6bridge18ffi__classify__key
+
+// Theme
+#define mbt_ffi_get_theme         _M0FP47trkbt1010hello__tty3src6bridge15ffi__get__theme
 
 // ---------- MoonBit runtime interface ----------
 
-// Include MoonBit runtime header for type definitions and macros.
 #include "moonbit.h"
 
-// moonbit_init is defined in the generated C code, not in the header.
 extern void moonbit_init(void);
 
-// MoonBit exported functions (via mangled names above)
-extern int32_t        mbt_ffi_init(moonbit_bytes_t rows, moonbit_bytes_t cols);
-extern int32_t        mbt_ffi_process_output(moonbit_bytes_t data);
+// MoonBit exported functions
+// Legacy single-session
+extern int32_t         mbt_ffi_init(moonbit_bytes_t rows, moonbit_bytes_t cols);
+extern int32_t         mbt_ffi_process_output(moonbit_bytes_t data);
 extern moonbit_bytes_t mbt_ffi_handle_key(moonbit_bytes_t key, moonbit_bytes_t mods);
-extern int32_t        mbt_ffi_resize(moonbit_bytes_t rows, moonbit_bytes_t cols);
+extern int32_t         mbt_ffi_resize(moonbit_bytes_t rows, moonbit_bytes_t cols);
 extern moonbit_bytes_t mbt_ffi_get_title(void);
 extern moonbit_bytes_t mbt_ffi_get_grid(void);
 extern moonbit_bytes_t mbt_ffi_get_modes(void);
 extern moonbit_bytes_t mbt_ffi_focus_event(moonbit_bytes_t gained);
-extern int32_t        mbt_ffi_shutdown(void);
-extern int32_t        mbt_ffi_gpu_init(moonbit_bytes_t surface, moonbit_bytes_t width, moonbit_bytes_t height);
-extern int32_t        mbt_ffi_gpu_resize(moonbit_bytes_t width, moonbit_bytes_t height);
-extern int32_t        mbt_ffi_render_frame(void);
-extern int32_t        mbt_ffi_classify_key(moonbit_bytes_t key, moonbit_bytes_t mods, moonbit_bytes_t has_marked);
+extern int32_t         mbt_ffi_shutdown(void);
+
+// Session management
+extern int32_t         mbt_ffi_create_session(moonbit_bytes_t rows, moonbit_bytes_t cols);
+extern int32_t         mbt_ffi_destroy_session(moonbit_bytes_t id);
+extern int32_t         mbt_ffi_switch_session(moonbit_bytes_t id);
+extern moonbit_bytes_t mbt_ffi_list_sessions(void);
+extern int32_t         mbt_ffi_get_active_session(void);
+
+// GPU rendering
+extern int32_t         mbt_ffi_gpu_init(moonbit_bytes_t surface, moonbit_bytes_t width, moonbit_bytes_t height);
+extern int32_t         mbt_ffi_gpu_resize(moonbit_bytes_t width, moonbit_bytes_t height);
+extern int32_t         mbt_ffi_render_frame(void);
+
+// Input classification
+extern int32_t         mbt_ffi_classify_key(moonbit_bytes_t key, moonbit_bytes_t mods, moonbit_bytes_t has_marked);
+
+// Theme
+extern moonbit_bytes_t mbt_ffi_get_theme(void);
 
 // ---------- Initialization ----------
 
@@ -65,12 +93,6 @@ static void ensure_init(void) {
 }
 
 // ---------- Bytes <-> C string conversion ----------
-
-// MoonBit Bytes memory layout (native C backend):
-// The runtime header (before the pointer) contains length.
-// Moonbit_array_length(ptr) extracts it via macro.
-// moonbit_make_bytes(size, fill) allocates from GC heap.
-// The data bytes start at the pointer itself.
 
 static moonbit_bytes_t cstr_to_moonbit_bytes(const char *str) {
     if (!str) {
@@ -93,7 +115,7 @@ static char *moonbit_bytes_to_cstr(moonbit_bytes_t bytes) {
     return result;
 }
 
-// ---------- Public C API ----------
+// ---------- Legacy single-session C API ----------
 
 int32_t hello_tty_init(const char *rows, const char *cols) {
     ensure_init();
@@ -157,6 +179,38 @@ void hello_tty_free_string(char *str) {
     free(str);
 }
 
+// ---------- Session Management ----------
+
+int32_t hello_tty_create_session(const char *rows, const char *cols) {
+    ensure_init();
+    moonbit_bytes_t rb = cstr_to_moonbit_bytes(rows);
+    moonbit_bytes_t cb = cstr_to_moonbit_bytes(cols);
+    return mbt_ffi_create_session(rb, cb);
+}
+
+int32_t hello_tty_destroy_session(const char *session_id) {
+    ensure_init();
+    moonbit_bytes_t ib = cstr_to_moonbit_bytes(session_id);
+    return mbt_ffi_destroy_session(ib);
+}
+
+int32_t hello_tty_switch_session(const char *session_id) {
+    ensure_init();
+    moonbit_bytes_t ib = cstr_to_moonbit_bytes(session_id);
+    return mbt_ffi_switch_session(ib);
+}
+
+char *hello_tty_list_sessions(void) {
+    ensure_init();
+    moonbit_bytes_t result = mbt_ffi_list_sessions();
+    return moonbit_bytes_to_cstr(result);
+}
+
+int32_t hello_tty_get_active_session(void) {
+    ensure_init();
+    return mbt_ffi_get_active_session();
+}
+
 // ---------- GPU Rendering ----------
 
 int32_t hello_tty_gpu_init_bridge(const char *surface_handle, const char *width, const char *height) {
@@ -185,4 +239,12 @@ int32_t hello_tty_gpu_resize_bridge(const char *width, const char *height) {
     moonbit_bytes_t wb = cstr_to_moonbit_bytes(width);
     moonbit_bytes_t hb = cstr_to_moonbit_bytes(height);
     return mbt_ffi_gpu_resize(wb, hb);
+}
+
+// ---------- Theme ----------
+
+char *hello_tty_get_theme(void) {
+    ensure_init();
+    moonbit_bytes_t result = mbt_ffi_get_theme();
+    return moonbit_bytes_to_cstr(result);
 }

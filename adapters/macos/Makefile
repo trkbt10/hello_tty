@@ -1,15 +1,15 @@
-# adapters/macos — macOS SwiftUIアダプタ
+# adapters/macos — macOS SwiftUI adapter
 #
-# 通常はプロジェクトルートのMakefileから呼ばれます:
-#   make dylib        → libhello_tty.dylib
-#   make swift        → dylib + Swift app
-#   make debug-macos  → ビルド + 実行
+# Usually invoked from the project root Makefile:
+#   make dylib        -> libhello_tty.dylib
+#   make swift        -> dylib + Swift app
+#   make debug-macos  -> build + run
 #
-# このMakefileを直接使う場合:
-#   make              → dylib
-#   make swift        → dylib + Swift app
-#   make run          → ビルド + 実行
-#   make clean        → ビルド成果物削除
+# If you use this Makefile directly:
+#   make              -> dylib
+#   make swift        -> dylib + Swift app
+#   make run          -> build + run
+#   make clean        -> remove build artifacts
 
 .PHONY: all swift run clean
 

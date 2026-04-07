@@ -6,10 +6,8 @@ import AppKit
 /// Wraps `NSVisualEffectView` for use in SwiftUI.
 ///
 /// This is the ONLY way to get behind-window blur on macOS.
-/// Setting `window.backgroundColor` to a semi-transparent color gives
-/// transparency (see-through) but zero blur. The window compositor's
-/// Gaussian blur is driven exclusively by `NSVisualEffectView` with
-/// `blendingMode = .behindWindow`.
+/// The window compositor's Gaussian blur is driven exclusively by
+/// `NSVisualEffectView` with `blendingMode = .behindWindow`.
 struct VisualEffectBackground: NSViewRepresentable {
     var material: NSVisualEffectView.Material
     var blendingMode: NSVisualEffectView.BlendingMode
@@ -95,11 +93,10 @@ class TerminalState: ObservableObject {
     private(set) var currentRows: Int = 24
     private(set) var currentCols: Int = 80
 
-    init(theme: TerminalTheme = .midnight) {
+    init(theme: TerminalTheme = .fallback) {
         self.theme = theme
         font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
-        // Use CoreText glyph advance for precise cell width.
         let ctFont = font as CTFont
         var chars: [UniChar] = [UniChar(0x4D)] // 'M'
         var glyphs: [CGGlyph] = [0]
@@ -120,8 +117,6 @@ class TerminalState: ObservableObject {
         _ = bridge.initialize(rows: rows, cols: cols)
     }
 
-    /// Start the PTY session and the background read loop.
-    /// Uses the current rows/cols (may have been updated by resize before start).
     func startShell(shell: String = "/bin/zsh") {
         let rows = currentRows
         let cols = currentCols
@@ -143,7 +138,6 @@ class TerminalState: ObservableObject {
     }
 
     /// Background PTY read loop.
-    ///
     /// IMPORTANT: MoonBit's GC is NOT thread-safe. Only pure-C functions
     /// (ptyPoll, ptyRead) may be called from this background thread.
     private func ptyReadLoop() {
@@ -172,7 +166,6 @@ class TerminalState: ObservableObject {
 
     func sendKey(keyCode: Int, modifiers: Int) {
         guard masterFd >= 0 else { return }
-
         guard let escapeSeq = bridge.handleKey(keyCode: keyCode, modifiers: modifiers),
               !escapeSeq.isEmpty,
               let data = escapeSeq.data(using: .utf8)
@@ -195,7 +188,7 @@ class TerminalState: ObservableObject {
     }
 
     func refresh() {
-        grid = bridge.getGrid(theme: theme)
+        grid = bridge.getGrid()
         title = bridge.getTitle()
     }
 
@@ -220,23 +213,14 @@ class TerminalState: ObservableObject {
     }
 }
 
-// MARK: - TerminalNSView
+// MARK: - TerminalNSView (CPU fallback renderer)
 
-/// Custom NSView for terminal grid rendering (CoreText CPU fallback).
-/// Input handling delegated to shared InputHandler.
-class TerminalNSView: NSView, NSTextInputClient {
-    var terminalState: TerminalState? {
-        didSet {
-            if let s = terminalState { input = InputHandler(state: s) }
-        }
-    }
-
+/// CoreText CPU fallback renderer.
+/// Input handling inherited from TerminalBaseView.
+/// Only adds: cursor blink timer, CoreText drawing, selection highlight.
+class TerminalNSView: TerminalBaseView {
     private var cursorVisible = true
     private var cursorTimer: Timer?
-    private var input: InputHandler?
-
-    override var acceptsFirstResponder: Bool { true }
-    override var canBecomeKeyView: Bool { true }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -258,26 +242,14 @@ class TerminalNSView: NSView, NSTextInputClient {
         }
     }
 
-    // MARK: - Resize
-
-    override func setFrameSize(_ newSize: NSSize) {
-        super.setFrameSize(newSize)
-        recalculateGridSize()
-    }
+    // MARK: - Resize (also recalculates grid via base class)
 
     override func setBoundsSize(_ newSize: NSSize) {
         super.setBoundsSize(newSize)
         recalculateGridSize()
     }
 
-    private func recalculateGridSize() {
-        guard let state = terminalState else { return }
-        let newCols = max(1, Int(bounds.width / state.cellWidth))
-        let newRows = max(1, Int(bounds.height / state.cellHeight))
-        state.resize(rows: newRows, cols: newCols)
-    }
-
-    // MARK: - Selection helpers (delegate to InputHandler)
+    // MARK: - Selection helpers
 
     private func isCellSelected(row: Int, col: Int) -> Bool {
         guard let anchor = input?.selectionAnchor, let end = input?.selectionEnd else { return false }
@@ -306,13 +278,11 @@ class TerminalNSView: NSView, NSTextInputClient {
         let cellH = state.cellHeight
         let font = state.font
 
-        // Background tint overlay on top of NSVisualEffectView blur.
         ctx.setFillColor(theme.background.cgColor)
         ctx.fill(bounds)
 
         guard let grid = state.grid else { return }
 
-        // Build cell lookup map
         var cellMap: [Int: [Int: TerminalGrid.CellData]] = [:]
         for cell in grid.cells {
             if cellMap[cell.row] == nil { cellMap[cell.row] = [:] }
@@ -331,7 +301,6 @@ class TerminalNSView: NSView, NSTextInputClient {
                 let selected = isCellSelected(row: row, col: col)
 
                 if let cell = cellMap[row]?[col] {
-                    // Cell background
                     if selected {
                         ctx.setFillColor(theme.selection.cgColor)
                         ctx.fill(rect)
@@ -358,8 +327,6 @@ class TerminalNSView: NSView, NSTextInputClient {
                             fgColor = bc
                         }
 
-                        // Build attributes — only add underline/strikethrough when actually set
-                        // to avoid NSAttributedString applying default underlines.
                         var attrs: [NSAttributedString.Key: Any] = [
                             .font: cellFont,
                             .foregroundColor: fgColor,
@@ -408,7 +375,6 @@ class TerminalNSView: NSView, NSTextInputClient {
             let cursorX = CGFloat(grid.cursor.col) * cellW
             let cursorY = bounds.height - CGFloat(grid.cursor.row + 1) * cellH
 
-            // Draw composition text with underline
             let compositionAttrs: [NSAttributedString.Key: Any] = [
                 .font: font,
                 .foregroundColor: theme.foreground,
@@ -417,7 +383,6 @@ class TerminalNSView: NSView, NSTextInputClient {
             ]
             let compositionStr = NSAttributedString(string: marked.string, attributes: compositionAttrs)
 
-            // Background for composition
             let compositionSize = compositionStr.size()
             let compositionRect = CGRect(x: cursorX, y: cursorY, width: compositionSize.width, height: cellH)
             ctx.setFillColor(theme.background.withAlphaComponent(0.95).cgColor)
@@ -426,99 +391,6 @@ class TerminalNSView: NSView, NSTextInputClient {
             let compositionLine = CTLineCreateWithAttributedString(compositionStr)
             ctx.textPosition = CGPoint(x: cursorX, y: cursorY + font.descender.magnitude)
             CTLineDraw(compositionLine, ctx)
-        }
-    }
-
-    // MARK: - Mouse (delegate to InputHandler)
-
-    override func mouseDown(with event: NSEvent) {
-        guard let input = input, let state = terminalState else { return }
-        let p = convert(event.locationInWindow, from: nil)
-        input.selectionAnchor = (max(0, Int((bounds.height - p.y) / state.cellHeight)),
-                                  max(0, Int(p.x / state.cellWidth)))
-        input.selectionEnd = input.selectionAnchor
-        needsDisplay = true
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard let input = input, let state = terminalState else { return }
-        let p = convert(event.locationInWindow, from: nil)
-        input.selectionEnd = (max(0, Int((bounds.height - p.y) / state.cellHeight)),
-                              max(0, Int(p.x / state.cellWidth)))
-        needsDisplay = true
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        guard let input = input else { return }
-        if let a = input.selectionAnchor, let e = input.selectionEnd,
-           a.row == e.row && a.col == e.col {
-            input.clearSelection()
-        }
-        needsDisplay = true
-    }
-
-    // MARK: - Keyboard (delegate to InputHandler)
-
-    override func keyDown(with event: NSEvent) {
-        guard let input = input else { return }
-        input.currentEvent = event
-        if !input.handleKeyDown(event) {
-            inputContext?.handleEvent(event)
-        }
-        input.currentEvent = nil
-    }
-
-    // MARK: - NSTextInputClient (delegate to InputHandler)
-
-    func insertText(_ string: Any, replacementRange: NSRange) {
-        input?.handleInsertText(string)
-        needsDisplay = true
-    }
-
-    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-        input?.handleSetMarkedText(string, selectedRange: selectedRange)
-        needsDisplay = true
-    }
-
-    func unmarkText() {
-        input?.handleUnmarkText()
-        needsDisplay = true
-    }
-
-    func selectedRange() -> NSRange { input?.selectedNSRange ?? NSRange(location: 0, length: 0) }
-    func markedRange() -> NSRange { input?.markedNSRange ?? NSRange(location: NSNotFound, length: 0) }
-    func hasMarkedText() -> Bool { input?.hasMarkedText ?? false }
-    func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? { nil }
-    func validAttributesForMarkedText() -> [NSAttributedString.Key] { [.font, .foregroundColor] }
-    func characterIndex(for point: NSPoint) -> Int { 0 }
-
-    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
-        input?.firstRect(in: self) ?? .zero
-    }
-
-    override func doCommand(by selector: Selector) {
-        input?.handleDoCommand(input?.currentEvent)
-    }
-
-    // MARK: - Context menu
-
-    override func menu(for event: NSEvent) -> NSMenu? {
-        let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Copy", action: #selector(copyAction), keyEquivalent: "c"))
-        menu.addItem(NSMenuItem(title: "Paste", action: #selector(pasteAction), keyEquivalent: "v"))
-        return menu
-    }
-
-    @objc private func copyAction() {
-        if let text = input?.selectedText() {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-        }
-    }
-
-    @objc private func pasteAction() {
-        if let text = NSPasteboard.general.string(forType: .string) {
-            terminalState?.sendText(text)
         }
     }
 }
