@@ -150,8 +150,8 @@ pub fn ffi_get_grid() -> Bytes {
             "r": row.to_json(),
             "c": col.to_json(),
             "ch": cell.char.to_string().to_json(),
-            "fg": color_to_json(cell.fg),
-            "bg": color_to_json(cell.bg),
+            "fg": color_to_json_fg(cell.fg),
+            "bg": color_to_json_bg(cell.bg),
             "a": cell.attrs.flags.to_json(),
           }
           cells_arr.push(cell_map.to_json())
@@ -250,9 +250,23 @@ fn bytes_to_int(data : Bytes, default_ : Int) -> Int {
 }
 
 ///|
-fn color_to_json(color : @terminal.Color) -> Json {
+/// Encode foreground color to JSON.
+/// Default fg → null (let the UI theme decide).
+fn color_to_json_fg(color : @terminal.Color) -> Json {
   match color {
-    Default => [255, 255, 255].to_json()
+    Default => Json::null()
+    Indexed(idx) => [idx].to_json()
+    Palette(idx) => [idx].to_json()
+    Rgb(r, g, b) => [r.to_int(), g.to_int(), b.to_int()].to_json()
+  }
+}
+
+///|
+/// Encode background color to JSON.
+/// Default bg → null (let the UI theme decide).
+fn color_to_json_bg(color : @terminal.Color) -> Json {
+  match color {
+    Default => Json::null()
     Indexed(idx) => [idx].to_json()
     Palette(idx) => [idx].to_json()
     Rgb(r, g, b) => [r.to_int(), g.to_int(), b.to_int()].to_json()

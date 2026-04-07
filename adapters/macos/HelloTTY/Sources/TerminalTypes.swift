@@ -25,7 +25,7 @@ struct TerminalGrid {
         let char: Character
         let fg: NSColor
         let bg: NSColor
-        let attrs: Int  // Bitfield: 1=bold, 2=italic, 4=underline, etc.
+        let attrs: Int  // Bitfield: 1=bold, 2=italic, 4=underline, 64=strikethrough, 128=dim, 16=inverse
 
         var isBold: Bool { attrs & 1 != 0 }
         var isItalic: Bool { attrs & 2 != 0 }
@@ -36,7 +36,12 @@ struct TerminalGrid {
     }
 
     /// Parse from JSON string produced by ffi_get_grid().
-    static func fromJSON(_ jsonStr: String) -> TerminalGrid? {
+    ///
+    /// Color resolution:
+    ///   - `null` → theme default (fg or bg depending on position)
+    ///   - `[r, g, b]` → RGB
+    ///   - `[index]` → 256-color palette via theme
+    static func fromJSON(_ jsonStr: String, theme: TerminalTheme) -> TerminalGrid? {
         guard let data = jsonStr.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
@@ -62,9 +67,16 @@ struct TerminalGrid {
                   let firstChar = ch.first
             else { return nil }
 
-            let fg = parseColor(cellObj["fg"])
-            let bg = parseColor(cellObj["bg"])
             let attrs = cellObj["a"] as? Int ?? 0
+            let isInverse = attrs & 16 != 0
+
+            var fg = parseColor(cellObj["fg"], default: theme.foreground, theme: theme)
+            var bg = parseColor(cellObj["bg"], default: theme.background, theme: theme)
+
+            // Inverse video: swap fg and bg
+            if isInverse {
+                swap(&fg, &bg)
+            }
 
             return CellData(row: r, col: c, char: firstChar, fg: fg, bg: bg, attrs: attrs)
         }
@@ -72,67 +84,26 @@ struct TerminalGrid {
         return TerminalGrid(rows: rows, cols: cols, cursor: cursor, cells: cells)
     }
 
-    /// Parse a color from JSON array.
-    /// [r, g, b] → RGB color
-    /// [index]   → indexed color (resolve via palette)
-    /// null/missing → default color
-    private static func parseColor(_ value: Any?) -> NSColor {
-        guard let arr = value as? [Int] else { return .white }
+    /// Parse a color from JSON.
+    /// - `NSNull` / nil → `defaultColor` (theme fg or bg)
+    /// - `[r, g, b]` → RGB
+    /// - `[index]` → indexed via theme palette
+    private static func parseColor(_ value: Any?, default defaultColor: NSColor, theme: TerminalTheme) -> NSColor {
+        // null from JSON → NSNull or nil
+        if value == nil || value is NSNull {
+            return defaultColor
+        }
+        guard let arr = value as? [Int] else { return defaultColor }
         if arr.count == 3 {
             return NSColor(
-                red: CGFloat(arr[0]) / 255.0,
+                srgbRed: CGFloat(arr[0]) / 255.0,
                 green: CGFloat(arr[1]) / 255.0,
                 blue: CGFloat(arr[2]) / 255.0,
                 alpha: 1.0
             )
         } else if arr.count == 1 {
-            return resolveIndexedColor(arr[0])
+            return theme.resolveIndexed(arr[0])
         }
-        return .white
-    }
-
-    /// Resolve a 256-color palette index to NSColor.
-    private static func resolveIndexedColor(_ index: Int) -> NSColor {
-        // Standard 16 ANSI colors
-        let ansiColors: [NSColor] = [
-            .black,                                                     // 0
-            NSColor(red: 0.67, green: 0, blue: 0, alpha: 1),           // 1 Red
-            NSColor(red: 0, green: 0.67, blue: 0, alpha: 1),           // 2 Green
-            NSColor(red: 0.67, green: 0.33, blue: 0, alpha: 1),        // 3 Yellow
-            NSColor(red: 0, green: 0, blue: 0.67, alpha: 1),           // 4 Blue
-            NSColor(red: 0.67, green: 0, blue: 0.67, alpha: 1),        // 5 Magenta
-            NSColor(red: 0, green: 0.67, blue: 0.67, alpha: 1),        // 6 Cyan
-            NSColor(red: 0.67, green: 0.67, blue: 0.67, alpha: 1),     // 7 White
-            NSColor(red: 0.33, green: 0.33, blue: 0.33, alpha: 1),     // 8 Bright Black
-            NSColor(red: 1, green: 0.33, blue: 0.33, alpha: 1),        // 9 Bright Red
-            NSColor(red: 0.33, green: 1, blue: 0.33, alpha: 1),        // 10 Bright Green
-            NSColor(red: 1, green: 1, blue: 0.33, alpha: 1),           // 11 Bright Yellow
-            NSColor(red: 0.33, green: 0.33, blue: 1, alpha: 1),        // 12 Bright Blue
-            NSColor(red: 1, green: 0.33, blue: 1, alpha: 1),           // 13 Bright Magenta
-            NSColor(red: 0.33, green: 1, blue: 1, alpha: 1),           // 14 Bright Cyan
-            .white,                                                      // 15 Bright White
-        ]
-
-        if index >= 0 && index < 16 {
-            return ansiColors[index]
-        }
-
-        // 216 color cube (16-231)
-        if index >= 16 && index < 232 {
-            let ci = index - 16
-            let cubeValues: [CGFloat] = [0, 0.37, 0.53, 0.69, 0.84, 1.0]
-            let ri = ci / 36
-            let gi = (ci / 6) % 6
-            let bi = ci % 6
-            return NSColor(red: cubeValues[ri], green: cubeValues[gi], blue: cubeValues[bi], alpha: 1)
-        }
-
-        // Grayscale (232-255)
-        if index >= 232 && index < 256 {
-            let gray = CGFloat(8 + (index - 232) * 10) / 255.0
-            return NSColor(white: gray, alpha: 1)
-        }
-
-        return .white
+        return defaultColor
     }
 }

@@ -20,6 +20,14 @@ class MoonBitBridge {
     private typealias FocusEventFn = @convention(c) (UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
     private typealias FreeStringFn = @convention(c) (UnsafeMutablePointer<CChar>?) -> Void
 
+    // PTY session function types
+    private typealias PtyStartFn = @convention(c) (UnsafePointer<CChar>?, Int32, Int32, UnsafeMutablePointer<Int32>) -> Int32
+    private typealias PtyPollFn = @convention(c) (Int32, Int32) -> Int32
+    private typealias PtyReadFn = @convention(c) (Int32, UnsafeMutablePointer<UInt8>, Int32) -> Int32
+    private typealias PtyWriteFn = @convention(c) (Int32, UnsafePointer<UInt8>, Int32) -> Int32
+    private typealias PtyCloseFn = @convention(c) (Int32) -> Void
+    private typealias PtyResizeFn = @convention(c) (Int32, Int32, Int32) -> Int32
+
     // Loaded function pointers
     private var fnInit: InitFn?
     private var fnShutdown: ShutdownFn?
@@ -31,6 +39,12 @@ class MoonBitBridge {
     private var fnResize: ResizeFn?
     private var fnFocusEvent: FocusEventFn?
     private var fnFreeString: FreeStringFn?
+    private var fnPtyStart: PtyStartFn?
+    private var fnPtyPoll: PtyPollFn?
+    private var fnPtyRead: PtyReadFn?
+    private var fnPtyWrite: PtyWriteFn?
+    private var fnPtyClose: PtyCloseFn?
+    private var fnPtyResize: PtyResizeFn?
 
     private var handle: UnsafeMutableRawPointer?
     private(set) var isLoaded = false
@@ -131,6 +145,12 @@ class MoonBitBridge {
         fnResize = sym("hello_tty_resize")
         fnFocusEvent = sym("hello_tty_focus_event")
         fnFreeString = sym("hello_tty_free_string")
+        fnPtyStart = sym("hello_tty_pty_start")
+        fnPtyPoll = sym("hello_tty_pty_poll")
+        fnPtyRead = sym("hello_tty_pty_read")
+        fnPtyWrite = sym("hello_tty_pty_write")
+        fnPtyClose = sym("hello_tty_pty_close")
+        fnPtyResize = sym("hello_tty_pty_resize")
     }
 
     // MARK: - Public API
@@ -166,12 +186,12 @@ class MoonBitBridge {
         return String(cString: ptr)
     }
 
-    func getGrid() -> TerminalGrid? {
+    func getGrid(theme: TerminalTheme = .midnight) -> TerminalGrid? {
         guard let fn = fnGetGrid else { return nil }
         guard let ptr = fn() else { return nil }
         defer { fnFreeString?(ptr) }
         let jsonStr = String(cString: ptr)
-        return TerminalGrid.fromJSON(jsonStr)
+        return TerminalGrid.fromJSON(jsonStr, theme: theme)
     }
 
     func getTitle() -> String {
@@ -210,5 +230,50 @@ class MoonBitBridge {
         guard let ptr = resultPtr else { return nil }
         defer { fnFreeString?(ptr) }
         return String(cString: ptr)
+    }
+
+    // MARK: - PTY Session
+
+    /// Start a PTY session. Returns (masterFd, childPid), or nil on failure.
+    func ptyStart(shell: String = "/bin/zsh", rows: Int = 24, cols: Int = 80) -> (masterFd: Int32, pid: Int32)? {
+        guard let fn = fnPtyStart else { return nil }
+        var pid: Int32 = 0
+        let masterFd = shell.withCString { fn($0, Int32(rows), Int32(cols), &pid) }
+        if masterFd < 0 { return nil }
+        return (masterFd, pid)
+    }
+
+    /// Poll PTY for readability. Returns 1=readable, 0=timeout, -2=EOF, -1=error.
+    func ptyPoll(masterFd: Int32, timeoutMs: Int32 = 10) -> Int32 {
+        guard let fn = fnPtyPoll else { return -1 }
+        return fn(masterFd, timeoutMs)
+    }
+
+    /// Read from PTY. Returns data or nil on EOF/error.
+    func ptyRead(masterFd: Int32, maxLen: Int = 4096) -> Data? {
+        guard let fn = fnPtyRead else { return nil }
+        var buf = [UInt8](repeating: 0, count: maxLen)
+        let n = fn(masterFd, &buf, Int32(maxLen))
+        if n <= 0 { return nil }
+        return Data(buf[0..<Int(n)])
+    }
+
+    /// Write data to PTY.
+    func ptyWrite(masterFd: Int32, data: Data) -> Bool {
+        guard let fn = fnPtyWrite else { return false }
+        return data.withUnsafeBytes { raw in
+            guard let ptr = raw.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return false }
+            return fn(masterFd, ptr, Int32(data.count)) >= 0
+        }
+    }
+
+    /// Close PTY master fd.
+    func ptyClose(masterFd: Int32) {
+        fnPtyClose?(masterFd)
+    }
+
+    /// Resize PTY window (TIOCSWINSZ).
+    func ptyResize(masterFd: Int32, rows: Int, cols: Int) {
+        _ = fnPtyResize?(masterFd, Int32(rows), Int32(cols))
     }
 }

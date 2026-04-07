@@ -70,6 +70,32 @@ int32_t hello_tty_resize(const char *rows, const char *cols);
 // Returns escape sequence (caller must free), or NULL if focus tracking is off.
 char *hello_tty_focus_event(const char *gained);
 
+// ---------- PTY session (posix_spawn, fork-safe) ----------
+
+// Start a PTY session. Spawns a shell via posix_spawn (not fork).
+// shell: path to shell executable.
+// rows, cols: terminal dimensions.
+// Returns master_fd (>= 0) on success, -1 on failure.
+// Writes child PID to *pid_out.
+int32_t hello_tty_pty_start(const char *shell, int32_t rows, int32_t cols, int32_t *pid_out);
+
+// Poll PTY master for readability.
+// Returns 1 if readable, 0 if timeout, -2 if EOF/HUP, -1 on error.
+int32_t hello_tty_pty_poll(int32_t master_fd, int32_t timeout_ms);
+
+// Read from PTY master. Returns bytes read into buf, 0 on EOF, -1 on error.
+int32_t hello_tty_pty_read(int32_t master_fd, uint8_t *buf, int32_t max_len);
+
+// Write to PTY master. Returns bytes written, -1 on error.
+int32_t hello_tty_pty_write(int32_t master_fd, const uint8_t *data, int32_t len);
+
+// Close PTY master fd.
+void hello_tty_pty_close(int32_t master_fd);
+
+// Resize PTY window (sends TIOCSWINSZ ioctl).
+// Returns 0 on success, -1 on error.
+int32_t hello_tty_pty_resize(int32_t master_fd, int32_t rows, int32_t cols);
+
 // ---------- Memory ----------
 
 // Free a string returned by any hello_tty_* function.
