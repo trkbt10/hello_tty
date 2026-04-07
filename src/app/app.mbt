@@ -21,8 +21,8 @@ pub struct App {
   renderer : @renderer.Renderer
   platform : @platform.Platform
   mut state : AppState
-  /// Process manager for subprocess lifecycle.
-  process_manager : @managed.ProcessManager
+  /// PID of the PTY reader subprocess (0 if not launched).
+  mut pty_reader_pid : Int
 }
 
 ///|
@@ -36,7 +36,6 @@ pub fn App::new(config? : AppConfig = AppConfig::default()) -> App {
   let parser = @vt_parser.Parser::new()
   let renderer = @renderer.Renderer::new(config=config.renderer_config)
   let platform = @platform.Platform::new()
-  let process_manager = @managed.ProcessManager::new()
   {
     config,
     terminal,
@@ -44,7 +43,7 @@ pub fn App::new(config? : AppConfig = AppConfig::default()) -> App {
     renderer,
     platform,
     state: Starting,
-    process_manager,
+    pty_reader_pid: 0,
   }
 }
 
@@ -142,6 +141,11 @@ pub fn App::start(self : App) -> Unit {
 /// Begin graceful shutdown.
 pub fn App::shutdown(self : App) -> Unit {
   self.state = ShuttingDown
+  // Kill PTY reader subprocess if it's running
+  if self.pty_reader_pid > 0 {
+    kill_child(self.pty_reader_pid)
+    self.pty_reader_pid = 0
+  }
   self.platform.shutdown()
   self.state = Stopped
 }
@@ -159,7 +163,17 @@ pub fn App::get_platform(self : App) -> @platform.Platform {
 }
 
 ///|
-/// Get the process manager.
-pub fn App::get_process_manager(self : App) -> @managed.ProcessManager {
-  self.process_manager
+/// Set the PTY reader subprocess PID (for lifecycle management).
+pub fn App::set_pty_reader_pid(self : App, pid : Int) -> Unit {
+  self.pty_reader_pid = pid
+}
+
+///|
+/// Check if the PTY reader subprocess is alive.
+pub fn App::is_pty_reader_alive(self : App) -> Bool {
+  if self.pty_reader_pid > 0 {
+    is_child_alive(self.pty_reader_pid)
+  } else {
+    false
+  }
 }

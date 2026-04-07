@@ -1,4 +1,7 @@
 options(
-  "native-stub": [ "c_stub/platform_stub.c" ],
+  "native-stub": [
+    "c_stub/platform_stub.c",
+    "c_stub/platform_macos.m",
+  ],
   targets: { "ffi.mbt": [ "native" ] },
 )

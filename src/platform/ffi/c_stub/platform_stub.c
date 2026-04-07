@@ -1,15 +1,16 @@
 // Platform FFI stub implementation.
-// This is a placeholder that will be replaced by platform-specific adapters
-// (macOS: AppKit/SwiftUI via dylib, Linux: GTK4 via C).
+// Used as a fallback on platforms where no native adapter is compiled
+// (e.g., Linux without GTK4, or headless testing).
 //
-// For now, all functions return failure/no-op so the code can link.
-// The real implementation lives in the adapters/ directory and is linked
-// at build time.
+// On macOS, the real implementation is in platform_macos.m.
+// On Linux, this stub will be replaced by platform_linux.c (GTK4) when available.
 
 #include <stdint.h>
 #include <string.h>
 
-// Weak symbols allow the real platform adapter to override these stubs.
+// Only compile stubs when no real adapter is available.
+// On macOS, platform_macos.m provides the real implementations.
+#if !defined(__APPLE__)
 
 int hello_tty_platform_init(void) {
   // Stub: no windowing system initialized
@@ -68,3 +69,5 @@ int hello_tty_platform_clipboard_get(uint8_t *buf, int max_len) {
   (void)max_len;
   return -1;
 }
+
+#endif // !__APPLE__

@@ -3,13 +3,15 @@ import {
   "trkbt10/hello_tty/src/terminal" @terminal,
   "trkbt10/hello_tty/src/renderer" @renderer,
   "trkbt10/hello_tty/src/platform" @platform,
-  "trkbt10/subprocess/managed" @managed,
+  "trkbt10/hello_tty/src/app/ffi" @spawn_ffi,
+  "moonbitlang/core/encoding/utf8" @utf8,
 }
 
 options(
   targets: {
     "app.mbt": [ "native" ],
     "input.mbt": [ "native" ],
+    "launcher.mbt": [ "native" ],
     "types.mbt": [ "native" ],
   },
 )
