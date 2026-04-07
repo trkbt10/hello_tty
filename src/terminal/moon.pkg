@@ -1,0 +1,15 @@
+import {
+  "trkbt10/hello_tty/src/vt_parser" @vt_parser,
+}
+
+options(
+  targets: {
+    "cell.mbt": [ "native" ],
+    "cursor.mbt": [ "native" ],
+    "grid.mbt": [ "native" ],
+    "handler.mbt": [ "native" ],
+    "screen.mbt": [ "native" ],
+    "scrollback.mbt": [ "native" ],
+    "types.mbt": [ "native" ],
+  },
+)

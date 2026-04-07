@@ -1,0 +1,16 @@
+{
+  "name": "trkbt10/hello_tty",
+  "version": "0.1.0",
+  "readme": "README.mbt.md",
+  "repository": "",
+  "license": "Apache-2.0",
+  "keywords": ["terminal", "emulator", "vt100", "pty", "gpu"],
+  "description": "GPU-accelerated terminal emulator built in MoonBit",
+  "deps": {
+    "moonbitlang/async": "0.16.8",
+    "moonbitlang/x": "0.4.41",
+    "trkbt10/subprocess": "0.2.0",
+    "trkbt10/osenv": "0.1.0"
+  },
+  "preferred-target": "native"
+}

@@ -1,0 +1,75 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "trkbt10/hello_tty/src/app"
+
+import {
+  "trkbt10/hello_tty/src/platform",
+  "trkbt10/hello_tty/src/renderer",
+  "trkbt10/hello_tty/src/terminal",
+  "trkbt10/hello_tty/src/vt_parser",
+  "trkbt10/subprocess/managed",
+}
+
+// Values
+pub fn translate_key_input(Int, Int, Bool) -> String
+
+// Errors
+pub suberror AppError {
+  PtyError(String)
+  PlatformError(String)
+  RenderError(String)
+  IpcError(String)
+}
+
+// Types and methods
+pub struct App {
+  config : AppConfig
+  terminal : @terminal.Terminal
+  parser : @vt_parser.Parser
+  renderer : @renderer.Renderer
+  platform : @platform.Platform
+  mut state : AppState
+  process_manager : @managed.ProcessManager
+}
+pub fn App::get_platform(Self) -> @platform.Platform
+pub fn App::get_process_manager(Self) -> @managed.ProcessManager
+pub fn App::get_state(Self) -> AppState
+pub fn App::get_terminal(Self) -> @terminal.Terminal
+pub fn App::handle_platform_event(Self, @platform.PlatformEvent) -> String
+pub fn App::is_running(Self) -> Bool
+pub fn App::new(config? : AppConfig) -> Self
+pub fn App::process_pty_output(Self, String) -> Unit
+pub fn App::render(Self) -> Array[@renderer.RenderCommand]
+pub fn App::resize(Self, Int, Int) -> Unit
+pub fn App::shutdown(Self) -> Unit
+pub fn App::start(Self) -> Unit
+pub fn App::sync_title(Self) -> Unit
+
+pub struct AppConfig {
+  rows : Int
+  cols : Int
+  shell : String
+  max_scrollback : Int
+  renderer_config : @renderer.RendererConfig
+} derive(Show)
+pub fn AppConfig::default() -> Self
+
+pub(all) enum AppState {
+  Starting
+  Running
+  ShuttingDown
+  Stopped
+} derive(Eq, Show)
+
+pub(all) enum IpcMessage {
+  PtyOutput(String)
+  KeyInput(String)
+  Resize(rows~ : Int, cols~ : Int)
+  Shutdown
+} derive(Show)
+pub fn IpcMessage::deserialize(String) -> Self?
+pub fn IpcMessage::serialize(Self) -> String
+
+// Type aliases
+
+// Traits
+

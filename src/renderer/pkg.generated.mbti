@@ -1,0 +1,123 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "trkbt10/hello_tty/src/renderer"
+
+import {
+  "trkbt10/hello_tty/src/terminal",
+}
+
+// Values
+pub fn resolve_color(@terminal.Color, RendererConfig, Bool) -> RgbaColor
+
+// Errors
+
+// Types and methods
+pub struct CachedGlyph {
+  atlas_x : Int
+  atlas_y : Int
+  width : Int
+  height : Int
+  bearing_x : Int
+  bearing_y : Int
+  advance : Int
+} derive(Show)
+
+pub struct CellQuad {
+  row : Int
+  col : Int
+  glyph : GlyphKey?
+  fg : RgbaColor
+  bg : RgbaColor
+  attrs_flags : Int
+} derive(Show)
+
+pub struct CursorQuad {
+  row : Int
+  col : Int
+  style : @terminal.CursorStyle
+  color : RgbaColor
+  visible : Bool
+} derive(Show)
+
+pub struct GlyphKey {
+  codepoint : Int
+  bold : Bool
+  italic : Bool
+  font_size : Int
+} derive(Eq, Show)
+
+pub(all) enum RenderCommand {
+  Clear(RgbaColor)
+  DrawCells(Array[CellQuad])
+  DrawCursor(CursorQuad)
+  Present
+} derive(Show)
+
+pub struct Renderer {
+  config : RendererConfig
+  atlas : TextureAtlas
+}
+pub fn Renderer::calculate_grid_size(Self, Int, Int) -> (Int, Int)
+pub fn Renderer::calculate_window_size(Self, Int, Int) -> (Int, Int)
+pub fn Renderer::get_atlas(Self) -> TextureAtlas
+pub fn Renderer::get_config(Self) -> RendererConfig
+pub fn Renderer::new(config? : RendererConfig) -> Self
+pub fn Renderer::render(Self, @terminal.Terminal) -> Array[RenderCommand]
+
+pub struct RendererConfig {
+  cell_width : Int
+  cell_height : Int
+  font_size : Int
+  dpi_scale : Float
+  atlas_size : Int
+  default_fg : RgbaColor
+  default_bg : RgbaColor
+} derive(Show)
+pub fn RendererConfig::default() -> Self
+
+pub struct RgbaColor {
+  r : Byte
+  g : Byte
+  b : Byte
+  a : Byte
+} derive(Eq, Show)
+pub fn RgbaColor::black() -> Self
+pub fn RgbaColor::opaque(Byte, Byte, Byte) -> Self
+pub fn RgbaColor::white() -> Self
+
+pub struct TextureAtlas {
+  width : Int
+  height : Int
+  cache : Map[String, CachedGlyph]
+  mut cursor_x : Int
+  mut cursor_y : Int
+  mut row_height : Int
+  mut dirty : Bool
+}
+pub fn TextureAtlas::allocate(Self, GlyphKey, Int, Int, Int, Int, Int) -> CachedGlyph?
+pub fn TextureAtlas::clear(Self) -> Unit
+pub fn TextureAtlas::fill_ratio(Self) -> Float
+pub fn TextureAtlas::glyph_count(Self) -> Int
+pub fn TextureAtlas::is_dirty(Self) -> Bool
+pub fn TextureAtlas::lookup(Self, GlyphKey) -> CachedGlyph?
+pub fn TextureAtlas::mark_clean(Self) -> Unit
+pub fn TextureAtlas::new(Int, Int) -> Self
+
+pub struct Vertex {
+  x : Float
+  y : Float
+  u : Float
+  v : Float
+  fg_r : Float
+  fg_g : Float
+  fg_b : Float
+  fg_a : Float
+  bg_r : Float
+  bg_g : Float
+  bg_b : Float
+  bg_a : Float
+} derive(Show)
+
+// Type aliases
+
+// Traits
+

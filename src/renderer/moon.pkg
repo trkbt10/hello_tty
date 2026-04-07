@@ -1,0 +1,11 @@
+import {
+  "trkbt10/hello_tty/src/terminal" @terminal,
+}
+
+options(
+  targets: {
+    "atlas.mbt": [ "native" ],
+    "renderer.mbt": [ "native" ],
+    "types.mbt": [ "native" ],
+  },
+)

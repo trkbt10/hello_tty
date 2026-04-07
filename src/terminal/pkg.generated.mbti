@@ -1,0 +1,214 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "trkbt10/hello_tty/src/terminal"
+
+import {
+  "trkbt10/hello_tty/src/vt_parser",
+}
+
+// Values
+pub let attr_blink : Int
+
+pub let attr_bold : Int
+
+pub let attr_curly_underline : Int
+
+pub let attr_dim : Int
+
+pub let attr_double_underline : Int
+
+pub let attr_hidden : Int
+
+pub let attr_inverse : Int
+
+pub let attr_italic : Int
+
+pub let attr_strikethrough : Int
+
+pub let attr_underline : Int
+
+pub let default_max_scrollback : Int
+
+pub let default_page_size : Int
+
+// Errors
+
+// Types and methods
+pub struct Cell {
+  mut char : Char
+  mut fg : Color
+  mut bg : Color
+  attrs : CellAttrs
+  mut width : Int
+} derive(Show)
+pub fn Cell::copy_style_from(Self, Self) -> Unit
+pub fn Cell::empty() -> Self
+pub fn Cell::from_char(Char) -> Self
+pub fn Cell::is_empty(Self) -> Bool
+pub fn Cell::reset(Self) -> Unit
+
+pub struct CellAttrs {
+  mut flags : Int
+} derive(Eq, Show)
+pub fn CellAttrs::clear(Self) -> Unit
+pub fn CellAttrs::default() -> Self
+pub fn CellAttrs::has(Self, Int) -> Bool
+pub fn CellAttrs::set(Self, Int) -> Unit
+pub fn CellAttrs::unset(Self, Int) -> Unit
+
+pub(all) enum CharSet {
+  Ascii
+  DecSpecialGraphics
+  Uk
+} derive(Eq, Show)
+
+pub(all) enum Color {
+  Default
+  Indexed(Int)
+  Palette(Int)
+  Rgb(Byte, Byte, Byte)
+} derive(Eq, Show)
+
+pub struct Cursor {
+  mut row : Int
+  mut col : Int
+  pen : Cell
+  style : CursorStyle
+  mut visible : Bool
+  mut saved_row : Int
+  mut saved_col : Int
+  saved_pen : Cell
+  mut wrap_pending : Bool
+  mut charset_g0 : CharSet
+  mut charset_g1 : CharSet
+  mut active_charset : Int
+} derive(Show)
+pub fn Cursor::move_by(Self, Int, Int, Int, Int) -> Unit
+pub fn Cursor::move_to(Self, Int, Int, Int, Int) -> Unit
+pub fn Cursor::new() -> Self
+pub fn Cursor::restore(Self) -> Unit
+pub fn Cursor::save(Self) -> Unit
+
+pub(all) enum CursorStyle {
+  Block
+  Underline
+  Bar
+} derive(Eq, Show)
+
+pub struct Grid {
+  mut rows : Int
+  mut cols : Int
+  lines : Array[Row]
+  mut scroll_top : Int
+  mut scroll_bottom : Int
+} derive(Show)
+pub fn Grid::clear(Self) -> Unit
+pub fn Grid::clear_cells(Self, Int, Int, Int) -> Unit
+pub fn Grid::clear_rows(Self, Int, Int) -> Unit
+pub fn Grid::delete_cells(Self, Int, Int, Int) -> Unit
+pub fn Grid::delete_lines(Self, Int, Int) -> Unit
+pub fn Grid::get_cell(Self, Int, Int) -> Cell
+pub fn Grid::has_dirty_rows(Self) -> Bool
+pub fn Grid::insert_cells(Self, Int, Int, Int) -> Unit
+pub fn Grid::insert_lines(Self, Int, Int) -> Unit
+pub fn Grid::mark_all_clean(Self) -> Unit
+pub fn Grid::new(Int, Int) -> Self
+pub fn Grid::reset_scroll_region(Self) -> Unit
+pub fn Grid::resize(Self, Int, Int) -> Unit
+pub fn Grid::scroll_down(Self, Int) -> Unit
+pub fn Grid::scroll_up(Self, Int) -> Array[Row]
+pub fn Grid::set_cell(Self, Int, Int, Char, Cell) -> Unit
+pub fn Grid::set_scroll_region(Self, Int, Int) -> Unit
+
+pub struct Row {
+  cells : Array[Cell]
+  mut dirty : Bool
+  mut wrapped : Bool
+} derive(Show)
+pub fn Row::clear(Self) -> Unit
+pub fn Row::cols(Self) -> Int
+pub fn Row::get(Self, Int) -> Cell
+pub fn Row::new(Int) -> Self
+pub fn Row::resize(Self, Int) -> Unit
+
+pub(all) enum ScreenKind {
+  Primary
+  Alternate
+} derive(Eq, Show)
+
+pub struct ScreenSet {
+  primary : Grid
+  alternate : Grid
+  scrollback : Scrollback
+  mut active : ScreenKind
+  primary_cursor : Cursor
+  alternate_cursor : Cursor
+  mut rows : Int
+  mut cols : Int
+}
+pub fn ScreenSet::active_cursor(Self) -> Cursor
+pub fn ScreenSet::active_grid(Self) -> Grid
+pub fn ScreenSet::new(Int, Int, max_scrollback? : Int) -> Self
+pub fn ScreenSet::resize(Self, Int, Int) -> Unit
+pub fn ScreenSet::scroll_down(Self, Int) -> Unit
+pub fn ScreenSet::scroll_up(Self, Int) -> Unit
+pub fn ScreenSet::switch_to_alternate(Self) -> Unit
+pub fn ScreenSet::switch_to_primary(Self) -> Unit
+
+pub struct Scrollback {
+  pages : Array[ScrollbackPage]
+  max_lines : Int
+  mut total_lines : Int
+  page_size : Int
+}
+pub fn Scrollback::clear(Self) -> Unit
+pub fn Scrollback::get(Self, Int) -> Row?
+pub fn Scrollback::length(Self) -> Int
+pub fn Scrollback::new(max_lines? : Int, page_size? : Int) -> Self
+pub fn Scrollback::push(Self, Row) -> Unit
+pub fn Scrollback::push_rows(Self, Array[Row]) -> Unit
+
+type ScrollbackPage
+
+pub struct TermModes {
+  mut cursor_keys_application : Bool
+  ansi_mode : Bool
+  mut column_132 : Bool
+  mut smooth_scroll : Bool
+  mut reverse_video : Bool
+  mut origin_mode : Bool
+  mut auto_wrap : Bool
+  mut auto_repeat : Bool
+  mut cursor_visible : Bool
+  mut alternate_screen : Bool
+  mut bracketed_paste : Bool
+  mut mouse_tracking : Bool
+  mut mouse_sgr_mode : Bool
+  mut focus_tracking : Bool
+  mut linefeed_mode : Bool
+  mut insert_mode : Bool
+} derive(Show)
+pub fn TermModes::default() -> Self
+
+pub struct Terminal {
+  screen : ScreenSet
+  mut modes : TermModes
+  tab_stops : Array[Bool]
+  mut title : String
+  mut rows : Int
+  mut cols : Int
+}
+pub fn Terminal::get_cursor(Self) -> Cursor
+pub fn Terminal::get_grid(Self) -> Grid
+pub fn Terminal::get_modes(Self) -> TermModes
+pub fn Terminal::get_scrollback(Self) -> Scrollback
+pub fn Terminal::get_title(Self) -> String
+pub fn Terminal::handle_event(Self, @vt_parser.ParserEvent) -> Unit
+pub fn Terminal::handle_events(Self, Array[@vt_parser.ParserEvent]) -> Unit
+pub fn Terminal::new(rows? : Int, cols? : Int, max_scrollback? : Int) -> Self
+pub fn Terminal::reset(Self) -> Unit
+pub fn Terminal::resize(Self, Int, Int) -> Unit
+
+// Type aliases
+
+// Traits
+

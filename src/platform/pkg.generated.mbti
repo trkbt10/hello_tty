@@ -1,0 +1,56 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "trkbt10/hello_tty/src/platform"
+
+// Values
+pub let mod_alt : Int
+
+pub let mod_ctrl : Int
+
+pub let mod_shift : Int
+
+pub let mod_super : Int
+
+// Errors
+pub suberror PlatformError {
+  InitFailed(String)
+  WindowCreationFailed(String)
+  ClipboardError(String)
+}
+
+// Types and methods
+pub struct Platform {
+  mut initialized : Bool
+  mut window : WindowHandle?
+  event_buf : FixedArray[Int]
+}
+pub fn Platform::clipboard_get(Self) -> String raise PlatformError
+pub fn Platform::clipboard_set(Self, String) -> Unit raise PlatformError
+pub fn Platform::create_window(Self, Int, Int) -> WindowHandle raise PlatformError
+pub fn Platform::get_dpi_scale(Self) -> Float
+pub fn Platform::get_vulkan_surface(Self) -> Int
+pub fn Platform::init(Self) -> Unit raise PlatformError
+pub fn Platform::new() -> Self
+pub fn Platform::poll_event(Self) -> PlatformEvent
+pub fn Platform::request_redraw(Self) -> Unit
+pub fn Platform::set_title(Self, String) -> Unit
+pub fn Platform::shutdown(Self) -> Unit
+
+pub(all) enum PlatformEvent {
+  None
+  KeyPress(key_code~ : Int, modifiers~ : Int)
+  Resize(width~ : Int, height~ : Int)
+  CloseRequested
+  FocusGained
+  FocusLost
+  MouseEvent(x~ : Int, y~ : Int, button~ : Int, kind~ : Int)
+  Error(String)
+} derive(Show)
+
+pub struct WindowHandle {
+  id : Int
+} derive(Show)
+
+// Type aliases
+
+// Traits
+

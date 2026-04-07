@@ -1,0 +1,52 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "trkbt10/hello_tty/src/pty"
+
+// Values
+pub let default_read_buf_size : Int
+
+pub fn fork_with_shell(shell? : String, rows? : Int, cols? : Int) -> PtyChild raise PtyError
+
+// Errors
+pub suberror PtyError {
+  OpenFailed(String)
+  ForkFailed(String)
+  IoError(String)
+  WinsizeFailed(String)
+}
+
+// Types and methods
+pub struct Pty {
+  master_fd : Int
+  slave_fd : Int
+  rows : Int
+  cols : Int
+} derive(Show)
+pub fn Pty::close(Self) -> Unit
+pub fn Pty::open(rows? : Int, cols? : Int) -> Self raise PtyError
+
+pub struct PtyChild {
+  master_fd : Int
+  pid : Int
+  mut rows : Int
+  mut cols : Int
+} derive(Show)
+pub fn PtyChild::close(Self) -> Unit
+pub fn PtyChild::get_pid(Self) -> Int
+pub fn PtyChild::get_winsize(Self) -> WinSize raise PtyError
+pub fn PtyChild::poll_read(Self, timeout_ms? : Int) -> Bool raise PtyError
+pub fn PtyChild::read(Self) -> Bytes raise PtyError
+pub fn PtyChild::read_with_buf_size(Self, Int) -> Bytes raise PtyError
+pub fn PtyChild::resize(Self, Int, Int) -> Unit raise PtyError
+pub fn PtyChild::set_nonblocking(Self) -> Unit raise PtyError
+pub fn PtyChild::write(Self, Bytes) -> Unit raise PtyError
+pub fn PtyChild::write_string(Self, String) -> Unit raise PtyError
+
+pub struct WinSize {
+  rows : Int
+  cols : Int
+} derive(Eq, Show)
+
+// Type aliases
+
+// Traits
+

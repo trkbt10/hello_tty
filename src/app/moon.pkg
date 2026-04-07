@@ -1,0 +1,15 @@
+import {
+  "trkbt10/hello_tty/src/vt_parser" @vt_parser,
+  "trkbt10/hello_tty/src/terminal" @terminal,
+  "trkbt10/hello_tty/src/renderer" @renderer,
+  "trkbt10/hello_tty/src/platform" @platform,
+  "trkbt10/subprocess/managed" @managed,
+}
+
+options(
+  targets: {
+    "app.mbt": [ "native" ],
+    "input.mbt": [ "native" ],
+    "types.mbt": [ "native" ],
+  },
+)

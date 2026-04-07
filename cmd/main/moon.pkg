@@ -1,0 +1,8 @@
+import {
+  "trkbt10/hello_tty/src/app" @app,
+}
+
+options(
+  "is-main": true,
+  targets: { "main.mbt": [ "native" ] },
+)

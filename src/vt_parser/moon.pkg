@@ -1,0 +1,8 @@
+options(
+  targets: {
+    "actions.mbt": [ "native" ],
+    "parser.mbt": [ "native" ],
+    "tables.mbt": [ "native" ],
+    "types.mbt": [ "native" ],
+  },
+)

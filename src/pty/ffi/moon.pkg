@@ -1,0 +1,4 @@
+options(
+  "native-stub": [ "c_stub/pty_unix.c", "c_stub/pty_moonbit_glue.c" ],
+  targets: { "ffi.mbt": [ "native" ] },
+)

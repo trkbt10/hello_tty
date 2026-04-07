@@ -1,0 +1,118 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "trkbt10/hello_tty/src/vt_parser"
+
+// Values
+pub fn csi_entry_action(Byte) -> (Action, State)
+
+pub fn csi_ignore_action(Byte) -> (Action, State)
+
+pub fn csi_intermediate_action(Byte) -> (Action, State)
+
+pub fn csi_param_action(Byte) -> (Action, State)
+
+pub fn dcs_entry_action(Byte) -> (Action, State)
+
+pub fn dcs_ignore_action(Byte) -> (Action, State)
+
+pub fn dcs_intermediate_action(Byte) -> (Action, State)
+
+pub fn dcs_param_action(Byte) -> (Action, State)
+
+pub fn dcs_passthrough_action(Byte) -> (Action, State)
+
+pub fn dispatch(State, Byte) -> (Action, State)
+
+pub fn escape_action(Byte) -> (Action, State)
+
+pub fn escape_intermediate_action(Byte) -> (Action, State)
+
+pub fn ground_action(Byte) -> (Action, State)
+
+pub fn osc_string_action(Byte) -> (Action, State)
+
+pub fn sos_pm_apc_string_action(Byte) -> (Action, State)
+
+// Errors
+
+// Types and methods
+pub(all) enum Action {
+  None
+  Print(Char)
+  Execute(Byte)
+  Clear
+  Collect(Byte)
+  Param(Byte)
+  EscDispatch(Byte)
+  CsiDispatch(Byte)
+  Hook(Byte)
+  Put(Byte)
+  Unhook
+  OscStart
+  OscPut(Byte)
+  OscEnd
+} derive(Eq, Show)
+
+pub struct CsiCommand {
+  params : Array[Int]
+  intermediates : Array[Byte]
+  final_byte : Byte
+} derive(Eq, Show)
+
+pub struct EscCommand {
+  intermediates : Array[Byte]
+  final_byte : Byte
+} derive(Eq, Show)
+
+pub struct OscCommand {
+  data : Array[Byte]
+} derive(Eq, Show)
+
+pub struct Parser {
+  mut state : State
+  intermediates : Array[Byte]
+  params : Array[Int]
+  mut current_param : Int
+  mut has_param : Bool
+  osc_data : Array[Byte]
+  dcs_data : Array[Byte]
+  max_params : Int
+}
+pub fn Parser::advance(Self, Byte) -> ParserEvent
+pub fn Parser::current_state(Self) -> State
+pub fn Parser::feed(Self, Bytes) -> Array[ParserEvent]
+pub fn Parser::feed_str(Self, String) -> Array[ParserEvent]
+pub fn Parser::new(max_params? : Int) -> Self
+pub fn Parser::reset(Self) -> Unit
+
+pub(all) enum ParserEvent {
+  Nop
+  PrintChar(Char)
+  Utf8Char(Char)
+  Control(Byte)
+  CsiSequence(CsiCommand)
+  EscSequence(EscCommand)
+  OscSequence(OscCommand)
+  DcsSequence(Array[Byte])
+} derive(Eq, Show)
+
+pub(all) enum State {
+  Ground
+  Escape
+  EscapeIntermediate
+  CsiEntry
+  CsiParam
+  CsiIntermediate
+  CsiIgnore
+  DcsEntry
+  DcsParam
+  DcsIntermediate
+  DcsPassthrough
+  DcsIgnore
+  OscString
+  SosPmApcString
+} derive(Eq, Show)
+
+// Type aliases
+
+// Traits
+

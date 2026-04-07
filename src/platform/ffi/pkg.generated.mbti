@@ -1,0 +1,34 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "trkbt10/hello_tty/src/platform/ffi"
+
+// Values
+pub fn platform_clipboard_get(FixedArray[Byte], Int) -> Int
+
+pub fn platform_clipboard_set(Bytes, Int) -> Int
+
+pub fn platform_create_window(Int, Int) -> Int
+
+pub fn platform_destroy_window(Int) -> Unit
+
+pub fn platform_get_dpi_scale(Int) -> Int
+
+pub fn platform_get_vulkan_surface(Int) -> Int
+
+pub fn platform_init() -> Int
+
+pub fn platform_poll_event(Int, FixedArray[Int]) -> Int
+
+pub fn platform_request_redraw(Int) -> Unit
+
+pub fn platform_set_title(Int, Bytes, Int) -> Unit
+
+pub fn platform_shutdown() -> Unit
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits
+
