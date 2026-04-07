@@ -70,6 +70,30 @@ int32_t hello_tty_resize(const char *rows, const char *cols);
 // Returns escape sequence (caller must free), or NULL if focus tracking is off.
 char *hello_tty_focus_event(const char *gained);
 
+// ---------- Input classification (MoonBit SoT) ----------
+
+// Classify a key event. Returns:
+//   0 = DirectToPty, 1 = ForwardToIme, 2 = ClipboardCopy, 3 = ClipboardPaste
+int32_t hello_tty_classify_key(const char *key_code, const char *modifiers, const char *has_marked_text);
+
+// ---------- GPU rendering (MoonBit pipeline) ----------
+
+// Initialize GPU backend via MoonBit renderer.
+// surface_handle: CAMetalLayer* (or 0) as decimal string.
+// width, height: framebuffer pixel size as decimal strings.
+// Returns 0 on success, -1 on failure.
+int32_t hello_tty_gpu_init_bridge(const char *surface_handle, const char *width, const char *height);
+
+// Render the current terminal state to the GPU.
+// All rendering logic (glyph atlas, vertex generation, color resolution)
+// runs in MoonBit. Swift only needs to call this once per frame.
+// Returns 0 on success.
+int32_t hello_tty_render_frame(void);
+
+// Resize the GPU surface.
+// width, height: new pixel dimensions as decimal strings.
+int32_t hello_tty_gpu_resize_bridge(const char *width, const char *height);
+
 // ---------- PTY session (posix_spawn, fork-safe) ----------
 
 // Start a PTY session. Spawns a shell via posix_spawn (not fork).

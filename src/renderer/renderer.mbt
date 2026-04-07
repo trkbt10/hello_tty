@@ -80,14 +80,14 @@ pub fn resolve_color(
 /// visible grid and produces rendering instructions for the GPU backend.
 pub struct Renderer {
   config : RendererConfig
-  atlas : TextureAtlas
+  atlas : @font.TextureAtlas
 }
 
 ///|
 pub fn Renderer::new(
   config? : RendererConfig = RendererConfig::default(),
 ) -> Renderer {
-  { config, atlas: TextureAtlas::new(config.atlas_size, config.atlas_size) }
+  { config, atlas: @font.TextureAtlas::new(config.atlas_size, config.atlas_size) }
 }
 
 ///|
@@ -131,7 +131,7 @@ pub fn Renderer::render(
       }
       let resolved_fg = resolve_color(fg_color, self.config, true)
       let resolved_bg = resolve_color(bg_color, self.config, false)
-      let glyph_key = if cell.is_empty() {
+      let glyph_key : @font.GlyphKey? = if cell.is_empty() {
         None
       } else {
         Some({
@@ -144,6 +144,7 @@ pub fn Renderer::render(
       cell_quads.push({
         row,
         col,
+        cell_cols: if cell.width > 0 { cell.width } else { 1 },
         glyph: glyph_key,
         fg: resolved_fg,
         bg: resolved_bg,
@@ -171,7 +172,7 @@ pub fn Renderer::render(
 
 ///|
 /// Get the texture atlas (for GPU texture management).
-pub fn Renderer::get_atlas(self : Renderer) -> TextureAtlas {
+pub fn Renderer::get_atlas(self : Renderer) -> @font.TextureAtlas {
   self.atlas
 }
 

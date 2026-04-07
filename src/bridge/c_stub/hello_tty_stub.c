@@ -25,6 +25,10 @@
 #define mbt_ffi_get_modes         _M0FP47trkbt1010hello__tty3src6bridge15ffi__get__modes
 #define mbt_ffi_focus_event       _M0FP47trkbt1010hello__tty3src6bridge17ffi__focus__event
 #define mbt_ffi_shutdown          _M0FP47trkbt1010hello__tty3src6bridge13ffi__shutdown
+#define mbt_ffi_gpu_init          _M0FP47trkbt1010hello__tty3src6bridge14ffi__gpu__init
+#define mbt_ffi_gpu_resize        _M0FP47trkbt1010hello__tty3src6bridge16ffi__gpu__resize
+#define mbt_ffi_render_frame      _M0FP47trkbt1010hello__tty3src6bridge18ffi__render__frame
+#define mbt_ffi_classify_key      _M0FP47trkbt1010hello__tty3src6bridge18ffi__classify__key
 
 // ---------- MoonBit runtime interface ----------
 
@@ -44,6 +48,10 @@ extern moonbit_bytes_t mbt_ffi_get_grid(void);
 extern moonbit_bytes_t mbt_ffi_get_modes(void);
 extern moonbit_bytes_t mbt_ffi_focus_event(moonbit_bytes_t gained);
 extern int32_t        mbt_ffi_shutdown(void);
+extern int32_t        mbt_ffi_gpu_init(moonbit_bytes_t surface, moonbit_bytes_t width, moonbit_bytes_t height);
+extern int32_t        mbt_ffi_gpu_resize(moonbit_bytes_t width, moonbit_bytes_t height);
+extern int32_t        mbt_ffi_render_frame(void);
+extern int32_t        mbt_ffi_classify_key(moonbit_bytes_t key, moonbit_bytes_t mods, moonbit_bytes_t has_marked);
 
 // ---------- Initialization ----------
 
@@ -147,4 +155,34 @@ char *hello_tty_focus_event(const char *gained) {
 
 void hello_tty_free_string(char *str) {
     free(str);
+}
+
+// ---------- GPU Rendering ----------
+
+int32_t hello_tty_gpu_init_bridge(const char *surface_handle, const char *width, const char *height) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(surface_handle);
+    moonbit_bytes_t wb = cstr_to_moonbit_bytes(width);
+    moonbit_bytes_t hb = cstr_to_moonbit_bytes(height);
+    return mbt_ffi_gpu_init(sb, wb, hb);
+}
+
+int32_t hello_tty_render_frame(void) {
+    if (!moonbit_initialized) return -1;
+    return mbt_ffi_render_frame();
+}
+
+int32_t hello_tty_classify_key(const char *key_code, const char *modifiers, const char *has_marked_text) {
+    ensure_init();
+    moonbit_bytes_t kb = cstr_to_moonbit_bytes(key_code);
+    moonbit_bytes_t mb = cstr_to_moonbit_bytes(modifiers);
+    moonbit_bytes_t hb = cstr_to_moonbit_bytes(has_marked_text);
+    return mbt_ffi_classify_key(kb, mb, hb);
+}
+
+int32_t hello_tty_gpu_resize_bridge(const char *width, const char *height) {
+    if (!moonbit_initialized) return -1;
+    moonbit_bytes_t wb = cstr_to_moonbit_bytes(width);
+    moonbit_bytes_t hb = cstr_to_moonbit_bytes(height);
+    return mbt_ffi_gpu_resize(wb, hb);
 }

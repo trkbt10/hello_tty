@@ -1,11 +1,12 @@
 // GPU rendering FFI — C API for the MoonBit renderer backend.
 //
 // This layer provides:
-//   1. Vulkan device/swapchain/pipeline lifecycle
+//   1. wgpu device/surface/pipeline lifecycle (Metal on macOS, Vulkan on Linux)
 //   2. Font rasterization (CoreText on macOS, FreeType on Linux)
 //   3. Per-frame draw calls (upload vertices, draw, present)
 //
 // The MoonBit side builds RenderCommands; this C layer executes them on the GPU.
+// Backend: wgpu-native (WebGPU abstraction over Metal/Vulkan/DX12).
 
 #ifndef HELLO_TTY_GPU_FFI_H
 #define HELLO_TTY_GPU_FFI_H
@@ -18,8 +19,8 @@ extern "C" {
 
 // ---------- GPU lifecycle ----------
 
-// Initialize the GPU backend (Vulkan instance, device, swapchain).
-// surface_handle: platform-specific surface (VkSurfaceKHR cast to uint64_t, or 0 for headless).
+// Initialize the GPU backend (wgpu instance, device, surface).
+// surface_handle: platform-specific surface (CAMetalLayer* cast to uint64_t on macOS, or 0 for headless).
 // width, height: initial framebuffer size in pixels.
 // Returns 0 on success, -1 on failure.
 int hello_tty_gpu_init(uint64_t surface_handle, int width, int height);

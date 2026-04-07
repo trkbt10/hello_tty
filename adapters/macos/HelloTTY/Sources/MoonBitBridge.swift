@@ -28,6 +28,23 @@ class MoonBitBridge {
     private typealias PtyCloseFn = @convention(c) (Int32) -> Void
     private typealias PtyResizeFn = @convention(c) (Int32, Int32, Int32) -> Int32
 
+    // Input classification
+    private typealias ClassifyKeyFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
+
+    // Font rasterization function types
+    private typealias FontInitFn = @convention(c) (UnsafePointer<CChar>?, Int32, Int32) -> Int32
+    private typealias FontRasterizeFn = @convention(c) (Int32, Int32, Int32, UnsafeMutablePointer<Int32>, UnsafeMutablePointer<UInt8>, Int32) -> Int32
+    private typealias FontGetMetricsFn = @convention(c) (UnsafeMutablePointer<Int32>) -> Int32
+    private typealias FontShutdownFn = @convention(c) () -> Void
+
+    // GPU rendering via MoonBit pipeline (bridge functions)
+    private typealias GpuInitBridgeFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
+    private typealias RenderFrameFn = @convention(c) () -> Int32
+    private typealias GpuResizeBridgeFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
+
+    // Direct GPU FFI (for surface init that needs raw pointer)
+    private typealias GpuInitDirectFn = @convention(c) (UInt64, Int32, Int32) -> Int32
+
     // Loaded function pointers
     private var fnInit: InitFn?
     private var fnShutdown: ShutdownFn?
@@ -45,6 +62,22 @@ class MoonBitBridge {
     private var fnPtyWrite: PtyWriteFn?
     private var fnPtyClose: PtyCloseFn?
     private var fnPtyResize: PtyResizeFn?
+
+    // Input
+    private var fnClassifyKey: ClassifyKeyFn?
+
+    // Font
+    private var fnFontInit: FontInitFn?
+    private var fnFontRasterize: FontRasterizeFn?
+    private var fnFontGetMetrics: FontGetMetricsFn?
+    private var fnFontShutdown: FontShutdownFn?
+
+    // GPU (MoonBit pipeline bridge)
+    private var fnGpuInitBridge: GpuInitBridgeFn?
+    private var fnRenderFrame: RenderFrameFn?
+    private var fnGpuResizeBridge: GpuResizeBridgeFn?
+    // Direct GPU FFI (for raw surface init)
+    private var fnGpuInitDirect: GpuInitDirectFn?
 
     private var handle: UnsafeMutableRawPointer?
     private(set) var isLoaded = false
@@ -151,6 +184,22 @@ class MoonBitBridge {
         fnPtyWrite = sym("hello_tty_pty_write")
         fnPtyClose = sym("hello_tty_pty_close")
         fnPtyResize = sym("hello_tty_pty_resize")
+
+        // Input
+        fnClassifyKey = sym("hello_tty_classify_key")
+
+        // Font
+        fnFontInit = sym("hello_tty_font_init")
+        fnFontRasterize = sym("hello_tty_font_rasterize")
+        fnFontGetMetrics = sym("hello_tty_font_get_metrics")
+        fnFontShutdown = sym("hello_tty_font_shutdown")
+
+        // GPU (MoonBit pipeline bridge)
+        fnGpuInitBridge = sym("hello_tty_gpu_init_bridge")
+        fnRenderFrame = sym("hello_tty_render_frame")
+        fnGpuResizeBridge = sym("hello_tty_gpu_resize_bridge")
+        // Direct GPU FFI (for raw surface init)
+        fnGpuInitDirect = sym("hello_tty_gpu_init")
     }
 
     // MARK: - Public API
@@ -276,4 +325,71 @@ class MoonBitBridge {
     func ptyResize(masterFd: Int32, rows: Int, cols: Int) {
         _ = fnPtyResize?(masterFd, Int32(rows), Int32(cols))
     }
+
+    // MARK: - Input Classification (MoonBit SoT)
+
+    enum KeyClassification: Int32 {
+        case directToPty = 0
+        case forwardToIme = 1
+        case clipboardCopy = 2
+        case clipboardPaste = 3
+    }
+
+    /// Classify a key event — delegates to MoonBit input module (SoT).
+    func classifyKey(keyCode: Int, modifiers: Int, hasMarkedText: Bool) -> KeyClassification {
+        guard let fn = fnClassifyKey else { return .forwardToIme }
+        let result = "\(keyCode)".withCString { k in
+            "\(modifiers)".withCString { m in
+                "\(hasMarkedText ? 1 : 0)".withCString { h in
+                    fn(k, m, h)
+                }
+            }
+        }
+        return KeyClassification(rawValue: result) ?? .forwardToIme
+    }
+
+    // MARK: - GPU Rendering (MoonBit Pipeline)
+    //
+    // Font rasterization and glyph atlas management are handled entirely
+    // within MoonBit (src/font/ + src/renderer/). Swift does not need font FFI access.
+
+    /// Initialize GPU backend directly with raw CAMetalLayer pointer.
+    /// This calls wgpu FFI directly to set up the surface.
+    func gpuInitDirect(metalLayer: UnsafeMutableRawPointer, width: Int, height: Int) -> Bool {
+        guard let fn = fnGpuInitDirect else { return false }
+        let handle = UInt64(UInt(bitPattern: metalLayer))
+        return fn(handle, Int32(width), Int32(height)) == 0
+    }
+
+    /// Initialize MoonBit renderer + GPU backend.
+    /// Surface handle is passed as a decimal string through the bridge.
+    func gpuInitBridge(surfaceHandle: UInt, width: Int, height: Int) -> Bool {
+        guard let fn = fnGpuInitBridge else { return false }
+        return "\(surfaceHandle)".withCString { s in
+            "\(width)".withCString { w in
+                "\(height)".withCString { h in
+                    fn(s, w, h)
+                }
+            }
+        } == 0
+    }
+
+    /// Render the current terminal state to the GPU.
+    /// All rendering logic runs in MoonBit — Swift just calls this once per frame.
+    func renderFrame() -> Bool {
+        guard let fn = fnRenderFrame else { return false }
+        return fn() == 0
+    }
+
+    /// Resize GPU surface via MoonBit bridge.
+    func gpuResizeBridge(width: Int, height: Int) {
+        guard let fn = fnGpuResizeBridge else { return }
+        _ = "\(width)".withCString { w in
+            "\(height)".withCString { h in
+                fn(w, h)
+            }
+        }
+    }
+
+    var hasGPU: Bool { fnGpuInitDirect != nil && fnRenderFrame != nil }
 }

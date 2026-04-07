@@ -13,6 +13,8 @@
 struct BridgeState {
   mut terminal : @terminal.Terminal?
   mut parser : @vt_parser.Parser?
+  mut renderer : @renderer.Renderer?
+  mut gpu_backend : @renderer.GpuBackend?
   mut title : String
   mut rows : Int
   mut cols : Int
@@ -23,6 +25,8 @@ struct BridgeState {
 let bridge_state : BridgeState = {
   terminal: None,
   parser: None,
+  renderer: None,
+  gpu_backend: None,
   title: "",
   rows: 24,
   cols: 80,
@@ -78,7 +82,7 @@ pub fn ffi_handle_key(key_code_bytes : Bytes, modifiers_bytes : Bytes) -> Bytes 
       let key_code = bytes_to_int(key_code_bytes, 0)
       let modifiers = bytes_to_int(modifiers_bytes, 0)
       let modes = terminal.get_modes()
-      let result = @app.translate_key_input(
+      let result = @input.translate_key_input(
         key_code,
         modifiers,
         modes.cursor_keys_application,
@@ -212,13 +216,115 @@ pub fn ffi_focus_event(gained_bytes : Bytes) -> Bytes {
 }
 
 ///|
+/// Initialize the GPU rendering backend.
+/// surface_handle_lo/hi: CAMetalLayer* split into two 32-bit halves.
+/// width, height: framebuffer pixel dimensions.
+/// Returns 0 on success.
+pub fn ffi_gpu_init(
+  surface_bytes : Bytes,
+  width_bytes : Bytes,
+  height_bytes : Bytes
+) -> Int {
+  let surface_handle = bytes_to_int(surface_bytes, 0)
+  let width = bytes_to_int(width_bytes, 0)
+  let height = bytes_to_int(height_bytes, 0)
+  // Configure renderer with terminal-appropriate defaults:
+  // - Dark background (matching midnight theme)
+  // - Light foreground
+  // - DPI scale from pixel width / approximate point width
+  let font_config : @font.FontConfig = { font_size: 26, atlas_size: 1024 }
+  let font_engine = @font.FontEngine::new(config=font_config)
+  let render_config : @renderer.RendererConfig = {
+    cell_width: 8,
+    cell_height: 16,
+    font_size: 26,
+    dpi_scale: 2.0,
+    atlas_size: 1024,
+    default_fg: @renderer.RgbaColor::opaque(b'\xE6', b'\xE6', b'\xE6'),
+    default_bg: @renderer.RgbaColor::opaque(b'\x14', b'\x14', b'\x1A'),
+  }
+  let renderer = @renderer.Renderer::new(config=render_config)
+  let gpu = @renderer.GpuBackend::new(config=render_config, font=font_engine)
+  try {
+    gpu.init!(surface_handle, width, height)
+    bridge_state.renderer = Some(renderer)
+    bridge_state.gpu_backend = Some(gpu)
+    0
+  } catch {
+    _ => -1
+  }
+}
+
+///|
+/// Render the current terminal state to the GPU.
+/// This is the single call Swift needs for drawing — all rendering logic
+/// (glyph atlas, vertex generation, color resolution) runs in MoonBit.
+/// Returns 0 on success.
+pub fn ffi_render_frame() -> Int {
+  match (bridge_state.terminal, bridge_state.renderer, bridge_state.gpu_backend) {
+    (Some(terminal), Some(renderer), Some(gpu)) => {
+      let commands = renderer.render(terminal)
+      try {
+        gpu.execute_frame!(commands)
+        0
+      } catch {
+        _ => -1
+      }
+    }
+    _ => -1
+  }
+}
+
+///|
+/// Resize the GPU surface.
+/// Returns 0 on success.
+pub fn ffi_gpu_resize(width_bytes : Bytes, height_bytes : Bytes) -> Int {
+  let width = bytes_to_int(width_bytes, 0)
+  let height = bytes_to_int(height_bytes, 0)
+  match bridge_state.gpu_backend {
+    Some(gpu) =>
+      try {
+        gpu.resize!(width, height)
+        0
+      } catch {
+        _ => -1
+      }
+    None => -1
+  }
+}
+
+///|
 /// Shut down the terminal state.
 pub fn ffi_shutdown() -> Int {
+  if bridge_state.gpu_backend is Some(gpu) {
+    gpu.shutdown()
+  }
+  bridge_state.gpu_backend = None
+  bridge_state.renderer = None
   bridge_state.terminal = None
   bridge_state.parser = None
   bridge_state.initialized = false
   bridge_state.title = ""
   0
+}
+
+///|
+/// Classify a key event — SoT for input routing decisions.
+/// Returns: 0=DirectToPty, 1=ForwardToIme, 2=ClipboardCopy, 3=ClipboardPaste
+pub fn ffi_classify_key(
+  key_code_bytes : Bytes,
+  modifiers_bytes : Bytes,
+  has_marked_bytes : Bytes,
+) -> Int {
+  let key_code = bytes_to_int(key_code_bytes, 0)
+  let modifiers = bytes_to_int(modifiers_bytes, 0)
+  let has_marked = bytes_to_int(has_marked_bytes, 0) != 0
+  match @input.classify_key(key_code, modifiers, has_marked) {
+    DirectToPty => 0
+    ForwardToIme => 1
+    ClipboardCopy => 2
+    ClipboardPaste => 3
+  }
 }
 
 // ---------- Helpers ----------

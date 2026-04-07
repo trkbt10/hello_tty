@@ -18,5 +18,13 @@ fn main {
   let _r7 = @bridge.ffi_get_modes()
   let _r8 = @bridge.ffi_focus_event(gained)
   let _r9 = @bridge.ffi_shutdown()
+  // GPU rendering exports
+  let surface = @utf8.encode("0")
+  let width = @utf8.encode("640")
+  let height = @utf8.encode("480")
+  let _r10 = @bridge.ffi_gpu_init(surface, width, height)
+  let _r11 = @bridge.ffi_render_frame()
+  let _r12 = @bridge.ffi_gpu_resize(width, height)
+  let _r13 = @bridge.ffi_classify_key(key, mods, @utf8.encode("0"))
   println("bridge_lib: all exports referenced")
 }

@@ -43,18 +43,31 @@ struct VisualEffectBackground: NSViewRepresentable {
 // MARK: - Terminal View (SwiftUI wrapper)
 
 /// The main terminal rendering view (SwiftUI wrapper).
+///
+/// Chooses between GPU (wgpu/Metal) and CPU (CoreText) rendering based on
+/// whether the wgpu GPU backend is available in the dylib.
 struct TerminalView: NSViewRepresentable {
     @ObservedObject var state: TerminalState
 
-    func makeNSView(context: Context) -> TerminalNSView {
-        let view = TerminalNSView()
-        view.terminalState = state
-        return view
+    func makeNSView(context: Context) -> NSView {
+        if MoonBitBridge.shared.hasGPU {
+            let view = TerminalGPUView()
+            view.terminalState = state
+            return view
+        } else {
+            let view = TerminalNSView()
+            view.terminalState = state
+            return view
+        }
     }
 
-    func updateNSView(_ nsView: TerminalNSView, context: Context) {
-        nsView.terminalState = state
-        nsView.needsDisplay = true
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let gpuView = nsView as? TerminalGPUView {
+            gpuView.terminalState = state
+        } else if let cpuView = nsView as? TerminalNSView {
+            cpuView.terminalState = state
+            cpuView.needsDisplay = true
+        }
     }
 }
 
@@ -209,23 +222,18 @@ class TerminalState: ObservableObject {
 
 // MARK: - TerminalNSView
 
-/// Custom NSView for terminal grid rendering + text selection + IME.
+/// Custom NSView for terminal grid rendering (CoreText CPU fallback).
+/// Input handling delegated to shared InputHandler.
 class TerminalNSView: NSView, NSTextInputClient {
-    var terminalState: TerminalState?
+    var terminalState: TerminalState? {
+        didSet {
+            if let s = terminalState { input = InputHandler(state: s) }
+        }
+    }
 
-    // Cursor blink
     private var cursorVisible = true
     private var cursorTimer: Timer?
-
-    // Text selection (grid coordinates)
-    private var selectionAnchor: (row: Int, col: Int)?
-    private var selectionEnd: (row: Int, col: Int)?
-    private var isSelecting = false
-
-    // IME composition
-    private var markedText_: NSAttributedString?
-    private var markedRange_: NSRange = NSRange(location: NSNotFound, length: 0)
-    private var selectedRange_: NSRange = NSRange(location: 0, length: 0)
+    private var input: InputHandler?
 
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { true }
@@ -269,66 +277,21 @@ class TerminalNSView: NSView, NSTextInputClient {
         state.resize(rows: newRows, cols: newCols)
     }
 
-    // MARK: - Grid coordinate helpers
-
-    private func gridPosition(for point: NSPoint) -> (row: Int, col: Int)? {
-        guard let state = terminalState else { return nil }
-        let col = max(0, Int(point.x / state.cellWidth))
-        let row = max(0, Int((bounds.height - point.y) / state.cellHeight))
-        return (row, col)
-    }
-
-    private var selectionRange: (startRow: Int, startCol: Int, endRow: Int, endCol: Int)? {
-        guard let anchor = selectionAnchor, let end = selectionEnd else { return nil }
-        let (r1, c1) = (anchor.row, anchor.col)
-        let (r2, c2) = (end.row, end.col)
-        if r1 < r2 || (r1 == r2 && c1 <= c2) {
-            return (r1, c1, r2, c2)
-        } else {
-            return (r2, c2, r1, c1)
-        }
-    }
+    // MARK: - Selection helpers (delegate to InputHandler)
 
     private func isCellSelected(row: Int, col: Int) -> Bool {
-        guard let sel = selectionRange else { return false }
-        if row < sel.startRow || row > sel.endRow { return false }
-        if row == sel.startRow && row == sel.endRow {
-            return col >= sel.startCol && col <= sel.endCol
+        guard let anchor = input?.selectionAnchor, let end = input?.selectionEnd else { return false }
+        let (r1, c1, r2, c2): (Int, Int, Int, Int)
+        if anchor.row < end.row || (anchor.row == end.row && anchor.col <= end.col) {
+            (r1, c1, r2, c2) = (anchor.row, anchor.col, end.row, end.col)
+        } else {
+            (r1, c1, r2, c2) = (end.row, end.col, anchor.row, anchor.col)
         }
-        if row == sel.startRow { return col >= sel.startCol }
-        if row == sel.endRow { return col <= sel.endCol }
+        if row < r1 || row > r2 { return false }
+        if row == r1 && row == r2 { return col >= c1 && col <= c2 }
+        if row == r1 { return col >= c1 }
+        if row == r2 { return col <= c2 }
         return true
-    }
-
-    private func selectedText() -> String? {
-        guard let state = terminalState,
-              let grid = state.grid,
-              let sel = selectionRange
-        else { return nil }
-
-        var cellMap: [Int: [Int: TerminalGrid.CellData]] = [:]
-        for cell in grid.cells {
-            if cellMap[cell.row] == nil { cellMap[cell.row] = [:] }
-            cellMap[cell.row]![cell.col] = cell
-        }
-
-        var lines: [String] = []
-        for row in sel.startRow...sel.endRow {
-            var lineChars: [Character] = []
-            let cStart = (row == sel.startRow) ? sel.startCol : 0
-            let cEnd = (row == sel.endRow) ? sel.endCol : (grid.cols - 1)
-            for col in cStart...cEnd {
-                if let cell = cellMap[row]?[col] {
-                    lineChars.append(cell.char)
-                } else {
-                    lineChars.append(" ")
-                }
-            }
-            let line = String(lineChars)
-            lines.append(line.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression))
-        }
-        let result = lines.joined(separator: "\n")
-        return result.isEmpty ? nil : result
     }
 
     // MARK: - Drawing
@@ -440,7 +403,7 @@ class TerminalNSView: NSView, NSTextInputClient {
         }
 
         // IME marked text (composition preview)
-        if let marked = markedText_, marked.length > 0,
+        if let marked = input?.markedText, marked.length > 0,
            let grid = state.grid {
             let cursorX = CGFloat(grid.cursor.col) * cellW
             let cursorY = bounds.height - CGFloat(grid.cursor.row + 1) * cellH
@@ -466,187 +429,96 @@ class TerminalNSView: NSView, NSTextInputClient {
         }
     }
 
-    // MARK: - Mouse (text selection)
+    // MARK: - Mouse (delegate to InputHandler)
 
     override func mouseDown(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        guard let pos = gridPosition(for: point) else { return }
-
-        selectionAnchor = pos
-        selectionEnd = pos
-        isSelecting = true
+        guard let input = input, let state = terminalState else { return }
+        let p = convert(event.locationInWindow, from: nil)
+        input.selectionAnchor = (max(0, Int((bounds.height - p.y) / state.cellHeight)),
+                                  max(0, Int(p.x / state.cellWidth)))
+        input.selectionEnd = input.selectionAnchor
         needsDisplay = true
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard isSelecting else { return }
-        let point = convert(event.locationInWindow, from: nil)
-        guard let pos = gridPosition(for: point) else { return }
-
-        selectionEnd = pos
+        guard let input = input, let state = terminalState else { return }
+        let p = convert(event.locationInWindow, from: nil)
+        input.selectionEnd = (max(0, Int((bounds.height - p.y) / state.cellHeight)),
+                              max(0, Int(p.x / state.cellWidth)))
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard isSelecting else { return }
-        let point = convert(event.locationInWindow, from: nil)
-        if let pos = gridPosition(for: point) {
-            selectionEnd = pos
-        }
-        isSelecting = false
-
-        if let a = selectionAnchor, let e = selectionEnd,
+        guard let input = input else { return }
+        if let a = input.selectionAnchor, let e = input.selectionEnd,
            a.row == e.row && a.col == e.col {
-            selectionAnchor = nil
-            selectionEnd = nil
+            input.clearSelection()
         }
         needsDisplay = true
     }
 
-    // MARK: - Keyboard Input
+    // MARK: - Keyboard (delegate to InputHandler)
 
     override func keyDown(with event: NSEvent) {
-        guard let state = terminalState else { return }
-
-        // Cmd+C → copy selection
-        if event.modifierFlags.contains(.command) {
-            if let chars = event.charactersIgnoringModifiers, chars == "c" {
-                if let text = selectedText() {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
-                    return
-                }
-            }
-            if let chars = event.charactersIgnoringModifiers, chars == "v" {
-                if let text = NSPasteboard.general.string(forType: .string) {
-                    state.sendText(text)
-                    return
-                }
-            }
+        guard let input = input else { return }
+        input.currentEvent = event
+        if !input.handleKeyDown(event) {
+            inputContext?.handleEvent(event)
         }
-
-        // Clear selection on typing
-        if selectionAnchor != nil {
-            selectionAnchor = nil
-            selectionEnd = nil
-            needsDisplay = true
-        }
-
-        // Pass to input method (IME) first
-        inputContext?.handleEvent(event)
+        input.currentEvent = nil
     }
 
-    // MARK: - NSTextInputClient (IME support)
+    // MARK: - NSTextInputClient (delegate to InputHandler)
 
     func insertText(_ string: Any, replacementRange: NSRange) {
-        guard let state = terminalState else { return }
-        markedText_ = nil
-        markedRange_ = NSRange(location: NSNotFound, length: 0)
-
-        let str: String
-        if let s = string as? String {
-            str = s
-        } else if let s = string as? NSAttributedString {
-            str = s.string
-        } else {
-            return
-        }
-        state.sendText(str)
+        input?.handleInsertText(string)
         needsDisplay = true
     }
 
     func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-        if let s = string as? String {
-            markedText_ = NSAttributedString(string: s)
-        } else if let s = string as? NSAttributedString {
-            markedText_ = s
-        }
-        markedRange_ = NSRange(location: 0, length: markedText_?.length ?? 0)
-        selectedRange_ = selectedRange
+        input?.handleSetMarkedText(string, selectedRange: selectedRange)
         needsDisplay = true
     }
 
     func unmarkText() {
-        markedText_ = nil
-        markedRange_ = NSRange(location: NSNotFound, length: 0)
+        input?.handleUnmarkText()
         needsDisplay = true
     }
 
-    func selectedRange() -> NSRange {
-        return selectedRange_
-    }
-
-    func markedRange() -> NSRange {
-        return markedRange_
-    }
-
-    func hasMarkedText() -> Bool {
-        return markedText_ != nil && markedText_!.length > 0
-    }
-
-    func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
-        return nil
-    }
-
-    func validAttributedString(for _: NSAttributedString, at _: Int) -> NSAttributedString? {
-        return nil
-    }
+    func selectedRange() -> NSRange { input?.selectedNSRange ?? NSRange(location: 0, length: 0) }
+    func markedRange() -> NSRange { input?.markedNSRange ?? NSRange(location: NSNotFound, length: 0) }
+    func hasMarkedText() -> Bool { input?.hasMarkedText ?? false }
+    func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? { nil }
+    func validAttributesForMarkedText() -> [NSAttributedString.Key] { [.font, .foregroundColor] }
+    func characterIndex(for point: NSPoint) -> Int { 0 }
 
     func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
-        guard let state = terminalState,
-              let grid = state.grid
-        else { return .zero }
-
-        let cursorX = CGFloat(grid.cursor.col) * state.cellWidth
-        let cursorY = bounds.height - CGFloat(grid.cursor.row + 1) * state.cellHeight
-        let rect = CGRect(x: cursorX, y: cursorY, width: state.cellWidth, height: state.cellHeight)
-
-        // Convert to screen coordinates
-        guard let window = self.window else { return rect }
-        let windowRect = convert(rect, to: nil)
-        return window.convertToScreen(windowRect)
-    }
-
-    func characterIndex(for point: NSPoint) -> Int {
-        return 0
+        input?.firstRect(in: self) ?? .zero
     }
 
     override func doCommand(by selector: Selector) {
-        // Suppress system beep for unhandled keys
-    }
-
-    func validAttributesForMarkedText() -> [NSAttributedString.Key] {
-        return [.font, .foregroundColor, .underlineStyle]
+        input?.handleDoCommand(input?.currentEvent)
     }
 
     // MARK: - Context menu
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Copy", action: #selector(copySelection), keyEquivalent: "c"))
-        menu.addItem(NSMenuItem(title: "Paste", action: #selector(pasteClipboard), keyEquivalent: "v"))
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Select All", action: #selector(selectAll(_:)), keyEquivalent: "a"))
+        menu.addItem(NSMenuItem(title: "Copy", action: #selector(copyAction), keyEquivalent: "c"))
+        menu.addItem(NSMenuItem(title: "Paste", action: #selector(pasteAction), keyEquivalent: "v"))
         return menu
     }
 
-    @objc private func copySelection() {
-        if let text = selectedText() {
+    @objc private func copyAction() {
+        if let text = input?.selectedText() {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
         }
     }
 
-    @objc private func pasteClipboard() {
+    @objc private func pasteAction() {
         if let text = NSPasteboard.general.string(forType: .string) {
             terminalState?.sendText(text)
         }
-    }
-
-    override func selectAll(_ sender: Any?) {
-        guard let grid = terminalState?.grid else { return }
-        selectionAnchor = (row: 0, col: 0)
-        selectionEnd = (row: grid.rows - 1, col: grid.cols - 1)
-        needsDisplay = true
     }
 }

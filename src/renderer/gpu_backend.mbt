@@ -1,21 +1,14 @@
 ///|
-/// The GpuBackend executes RenderCommands on the GPU via Vulkan.
+/// The GpuBackend executes RenderCommands on the GPU via wgpu.
 ///
-/// It owns the font engine and manages glyph rasterization into the atlas.
+/// Consumes @font.FontEngine for glyph management.
 /// The render loop is:
-///   1. App builds RenderCommand array from terminal state
-///   2. GpuBackend::execute() processes each command via Vulkan FFI
+///   1. Renderer builds RenderCommand array from terminal state
+///   2. GpuBackend::execute_frame() processes commands via GPU FFI
 pub struct GpuBackend {
   config : RendererConfig
-  atlas : TextureAtlas
-  /// Font metrics from the font engine.
-  mut cell_width : Int
-  mut cell_height : Int
-  mut font_ascent : Int
-  mut font_descent : Int
-  /// Maximum rasterization buffer size per glyph (256x256 should be enough).
-  max_glyph_buf : Int
-  /// Whether the GPU has been initialized.
+  /// Font engine (SoT for glyph management) — injected dependency.
+  font : @font.FontEngine
   mut initialized : Bool
 }
 
@@ -27,52 +20,33 @@ pub suberror GpuError {
 }
 
 ///|
-/// Create a new GpuBackend. Does NOT initialize GPU resources —
-/// call init() after the platform window/surface is available.
 pub fn GpuBackend::new(
-  config? : RendererConfig = RendererConfig::default(),
+  config~ : RendererConfig = RendererConfig::default(),
+  font~ : @font.FontEngine = @font.FontEngine::new(),
 ) -> GpuBackend {
-  {
-    config,
-    atlas: TextureAtlas::new(config.atlas_size, config.atlas_size),
-    cell_width: config.cell_width,
-    cell_height: config.cell_height,
-    font_ascent: 0,
-    font_descent: 0,
-    max_glyph_buf: 65536, // 256x256
-    initialized: false,
-  }
+  { config, font, initialized: false }
 }
 
 ///|
-/// Initialize the GPU backend with a Vulkan surface and font engine.
-/// surface_handle: VkSurfaceKHR (as Int, or 0 for headless).
-/// width, height: initial framebuffer size in pixels.
+/// Initialize the GPU backend.
+/// surface_handle: platform-specific (CAMetalLayer* as Int, or 0 if already initialized).
+/// width, height: framebuffer size in pixels.
 pub fn GpuBackend::init(
   self : GpuBackend,
   surface_handle : Int,
   width : Int,
   height : Int,
-) -> Unit raise GpuError {
-  // Initialize GPU (surface handle fits in 32 bits for now)
+) -> Unit!GpuError {
   let ret = @ffi.gpu_init(surface_handle, 0, width, height)
   if ret < 0 {
-    raise InitFailed("Vulkan initialization failed")
+    raise InitFailed("GPU initialization failed")
   }
-  // Initialize font engine with system default monospace font
-  let empty_path = Bytes::new(0)
-  let font_ret = @ffi.font_init(empty_path, 0, self.config.font_size)
-  if font_ret < 0 {
-    raise FontError("Font engine initialization failed")
-  }
-  // Read font metrics to update cell dimensions
-  let metrics_buf : FixedArray[Int] = FixedArray::make(4, 0)
-  let m_ret = @ffi.font_get_metrics(metrics_buf)
-  if m_ret == 0 {
-    self.cell_width = metrics_buf[0]
-    self.cell_height = metrics_buf[1]
-    self.font_ascent = metrics_buf[2]
-    self.font_descent = metrics_buf[3]
+  // Delegate font initialization to FontEngine
+  try {
+    self.font.init!()
+  } catch {
+    @font.FontInitFailed(msg) => raise FontError(msg)
+    _ => raise FontError("Font initialization failed")
   }
   // Create atlas texture on GPU
   let atlas_ret = @ffi.gpu_atlas_create(
@@ -99,64 +73,7 @@ pub fn GpuBackend::resize(
   }
 }
 
-///|
-/// Rasterize a glyph if not already in the atlas, and return its CachedGlyph.
-fn GpuBackend::ensure_glyph(self : GpuBackend, key : GlyphKey) -> CachedGlyph? {
-  // Check cache first
-  match self.atlas.lookup(key) {
-    Some(cached) => return Some(cached)
-    None => ()
-  }
-  // Rasterize the glyph via font FFI
-  let metrics_buf : FixedArray[Int] = FixedArray::make(5, 0)
-  let bitmap_buf : FixedArray[Byte] = FixedArray::make(self.max_glyph_buf, b'\x00')
-  let bold_flag = if key.bold { 1 } else { 0 }
-  let italic_flag = if key.italic { 1 } else { 0 }
-  let bitmap_size = @ffi.font_rasterize(
-    key.codepoint,
-    bold_flag,
-    italic_flag,
-    metrics_buf,
-    bitmap_buf,
-    self.max_glyph_buf,
-  )
-  if bitmap_size < 0 {
-    return None
-  }
-  let glyph_w = metrics_buf[0]
-  let glyph_h = metrics_buf[1]
-  let bearing_x = metrics_buf[2]
-  let bearing_y = metrics_buf[3]
-  let advance = metrics_buf[4]
-  // Allocate space in the atlas
-  let cached = self.atlas.allocate(key, glyph_w, glyph_h, bearing_x, bearing_y, advance)
-  match cached {
-    None => return None
-    Some(glyph) => {
-      // Convert A8 bitmap to RGBA for GPU upload
-      let rgba_size = glyph_w * glyph_h * 4
-      let rgba_buf : FixedArray[Byte] = FixedArray::make(rgba_size, b'\x00')
-      for i in 0..<bitmap_size {
-        let alpha = bitmap_buf[i]
-        let base = i * 4
-        rgba_buf[base] = b'\xFF' // R
-        rgba_buf[base + 1] = b'\xFF' // G
-        rgba_buf[base + 2] = b'\xFF' // B
-        rgba_buf[base + 3] = alpha // A
-      }
-      // Upload to GPU atlas texture
-      let _upload_ret = @ffi.gpu_atlas_upload(
-        glyph.atlas_x,
-        glyph.atlas_y,
-        glyph_w,
-        glyph_h,
-        rgba_buf,
-        rgba_size,
-      )
-      Some(glyph)
-    }
-  }
-}
+// ensure_glyph is now in @font.FontEngine
 
 ///|
 /// Execute a sequence of render commands on the GPU.
@@ -228,6 +145,15 @@ pub fn GpuBackend::execute_frame(
 
 ///|
 /// Build and submit vertex data for cell quads.
+///
+/// Two-pass rendering:
+///   Pass 1 — Background: full-cell quads with bg color, UV=(0,0) (no texture)
+///   Pass 2 — Glyphs: bearing-positioned quads with fg color, atlas UV
+///
+/// This ensures:
+///   - Background fills the entire cell regardless of glyph size
+///   - Glyphs are rendered at their natural size without stretching
+///   - Baseline alignment via bearing_y relative to cell ascent
 fn GpuBackend::draw_cell_quads(
   self : GpuBackend,
   cells : Array[CellQuad],
@@ -235,139 +161,239 @@ fn GpuBackend::draw_cell_quads(
   if cells.length() == 0 {
     return
   }
-  let cw = Float::from_int(self.cell_width)
-  let ch = Float::from_int(self.cell_height)
+  let metrics = self.font.get_metrics()
+  let cw = Float::from_int(metrics.cell_width)
+  let ch = Float::from_int(metrics.cell_height)
   let atlas_w = Float::from_int(self.config.atlas_size)
   let atlas_h = Float::from_int(self.config.atlas_size)
-  // Each cell generates 6 vertices (2 triangles)
-  // Vertex format: [x, y, u, v, fg_r, fg_g, fg_b, fg_a, bg_r, bg_g, bg_b, bg_a]
-  let vertex_count = cells.length() * 6
+  let ascent = Float::from_int(metrics.ascent)
   let floats_per_vertex = 12
-  let total_floats = vertex_count * floats_per_vertex
-  let vertices : FixedArray[Float] = FixedArray::make(total_floats, 0.0)
-  let mut vi = 0 // vertex index into float array
+  // Pass 1: Backgrounds — one quad per cell
+  // Glyph quads are at most one per cell with a glyph
+  let max_bg_verts = cells.length() * 6
+  let max_fg_verts = cells.length() * 6
+  let bg_verts : FixedArray[Float] = FixedArray::make(
+    max_bg_verts * floats_per_vertex,
+    0.0,
+  )
+  let fg_verts : FixedArray[Float] = FixedArray::make(
+    max_fg_verts * floats_per_vertex,
+    0.0,
+  )
+  let mut bg_vi = 0
+  let mut fg_vi = 0
+  let mut fg_count = 0
   for i in 0..<cells.length() {
     let cell = cells[i]
-    let x0 = Float::from_int(cell.col) * cw
-    let y0 = Float::from_int(cell.row) * ch
-    let x1 = x0 + cw
-    let y1 = y0 + ch
-    // Resolve texture coords from glyph atlas
-    let mut u0 : Float = 0.0
-    let mut v0 : Float = 0.0
-    let mut u1 : Float = 0.0
-    let mut v1 : Float = 0.0
-    match cell.glyph {
-      Some(key) => {
-        let cached = self.ensure_glyph(key)
-        match cached {
-          Some(g) => {
-            u0 = Float::from_int(g.atlas_x) / atlas_w
-            v0 = Float::from_int(g.atlas_y) / atlas_h
-            u1 = Float::from_int(g.atlas_x + g.width) / atlas_w
-            v1 = Float::from_int(g.atlas_y + g.height) / atlas_h
-          }
-          None => ()
-        }
-      }
-      None => ()
-    }
-    let fg_r = Float::from_int(cell.fg.r.to_int()) / 255.0
-    let fg_g = Float::from_int(cell.fg.g.to_int()) / 255.0
-    let fg_b = Float::from_int(cell.fg.b.to_int()) / 255.0
-    let fg_a = Float::from_int(cell.fg.a.to_int()) / 255.0
+    // Skip continuation cells (width=0) — the wide cell's quad already covers them
+    if cell.cell_cols == 0 { continue }
+    let cell_x = Float::from_int(cell.col) * cw
+    let cell_y = Float::from_int(cell.row) * ch
+    let cell_w = cw * Float::from_int(cell.cell_cols) // 2*cw for wide chars
     let bg_r = Float::from_int(cell.bg.r.to_int()) / 255.0
     let bg_g = Float::from_int(cell.bg.g.to_int()) / 255.0
     let bg_b = Float::from_int(cell.bg.b.to_int()) / 255.0
     let bg_a = Float::from_int(cell.bg.a.to_int()) / 255.0
-    // Triangle 1: top-left, top-right, bottom-left
-    // Vertex 0: top-left
-    vertices[vi] = x0
-    vertices[vi + 1] = y0
-    vertices[vi + 2] = u0
-    vertices[vi + 3] = v0
-    vertices[vi + 4] = fg_r
-    vertices[vi + 5] = fg_g
-    vertices[vi + 6] = fg_b
-    vertices[vi + 7] = fg_a
-    vertices[vi + 8] = bg_r
-    vertices[vi + 9] = bg_g
-    vertices[vi + 10] = bg_b
-    vertices[vi + 11] = bg_a
-    vi += floats_per_vertex
-    // Vertex 1: top-right
-    vertices[vi] = x1
-    vertices[vi + 1] = y0
-    vertices[vi + 2] = u1
-    vertices[vi + 3] = v0
-    vertices[vi + 4] = fg_r
-    vertices[vi + 5] = fg_g
-    vertices[vi + 6] = fg_b
-    vertices[vi + 7] = fg_a
-    vertices[vi + 8] = bg_r
-    vertices[vi + 9] = bg_g
-    vertices[vi + 10] = bg_b
-    vertices[vi + 11] = bg_a
-    vi += floats_per_vertex
-    // Vertex 2: bottom-left
-    vertices[vi] = x0
-    vertices[vi + 1] = y1
-    vertices[vi + 2] = u0
-    vertices[vi + 3] = v1
-    vertices[vi + 4] = fg_r
-    vertices[vi + 5] = fg_g
-    vertices[vi + 6] = fg_b
-    vertices[vi + 7] = fg_a
-    vertices[vi + 8] = bg_r
-    vertices[vi + 9] = bg_g
-    vertices[vi + 10] = bg_b
-    vertices[vi + 11] = bg_a
-    vi += floats_per_vertex
-    // Triangle 2: top-right, bottom-right, bottom-left
-    // Vertex 3: top-right
-    vertices[vi] = x1
-    vertices[vi + 1] = y0
-    vertices[vi + 2] = u1
-    vertices[vi + 3] = v0
-    vertices[vi + 4] = fg_r
-    vertices[vi + 5] = fg_g
-    vertices[vi + 6] = fg_b
-    vertices[vi + 7] = fg_a
-    vertices[vi + 8] = bg_r
-    vertices[vi + 9] = bg_g
-    vertices[vi + 10] = bg_b
-    vertices[vi + 11] = bg_a
-    vi += floats_per_vertex
-    // Vertex 4: bottom-right
-    vertices[vi] = x1
-    vertices[vi + 1] = y1
-    vertices[vi + 2] = u1
-    vertices[vi + 3] = v1
-    vertices[vi + 4] = fg_r
-    vertices[vi + 5] = fg_g
-    vertices[vi + 6] = fg_b
-    vertices[vi + 7] = fg_a
-    vertices[vi + 8] = bg_r
-    vertices[vi + 9] = bg_g
-    vertices[vi + 10] = bg_b
-    vertices[vi + 11] = bg_a
-    vi += floats_per_vertex
-    // Vertex 5: bottom-left
-    vertices[vi] = x0
-    vertices[vi + 1] = y1
-    vertices[vi + 2] = u0
-    vertices[vi + 3] = v1
-    vertices[vi + 4] = fg_r
-    vertices[vi + 5] = fg_g
-    vertices[vi + 6] = fg_b
-    vertices[vi + 7] = fg_a
-    vertices[vi + 8] = bg_r
-    vertices[vi + 9] = bg_g
-    vertices[vi + 10] = bg_b
-    vertices[vi + 11] = bg_a
-    vi += floats_per_vertex
+    let fg_r = Float::from_int(cell.fg.r.to_int()) / 255.0
+    let fg_g = Float::from_int(cell.fg.g.to_int()) / 255.0
+    let fg_b = Float::from_int(cell.fg.b.to_int()) / 255.0
+    let fg_a = Float::from_int(cell.fg.a.to_int()) / 255.0
+    // Background quad: full cell width (may span multiple columns), no texture
+    emit_quad(
+      bg_verts,
+      bg_vi,
+      cell_x,
+      cell_y,
+      cell_x + cell_w,
+      cell_y + ch,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      bg_r,
+      bg_g,
+      bg_b,
+      bg_a,
+      bg_r,
+      bg_g,
+      bg_b,
+      bg_a,
+    )
+    bg_vi += 6 * floats_per_vertex
+    // Glyph quad (if present): positioned using bearing
+    match cell.glyph {
+      Some(key) =>
+        match self.font.ensure_glyph(key) {
+          Some(rg) => {
+            // Upload bitmap to GPU if newly rasterized
+            if rg.is_new && rg.bitmap_width > 0 && rg.bitmap_height > 0 {
+              let _upload = @ffi.gpu_atlas_upload(
+                rg.cached.atlas_x,
+                rg.cached.atlas_y,
+                rg.bitmap_width,
+                rg.bitmap_height,
+                rg.bitmap,
+                rg.bitmap_width * rg.bitmap_height * 4,
+              )
+            }
+            let g = rg.cached
+            // Glyph position within cell:
+            //   x = cell_x + bearing_x
+            //   y = cell_y + (ascent - bearing_y)   ← baseline-relative
+            let gx0 = cell_x + Float::from_int(g.bearing_x)
+            let gy0 = cell_y + (ascent - Float::from_int(g.bearing_y))
+            let gx1 = gx0 + Float::from_int(g.width)
+            let gy1 = gy0 + Float::from_int(g.height)
+            let u0 = Float::from_int(g.atlas_x) / atlas_w
+            let v0 = Float::from_int(g.atlas_y) / atlas_h
+            let u1 = Float::from_int(g.atlas_x + g.width) / atlas_w
+            let v1 = Float::from_int(g.atlas_y + g.height) / atlas_h
+            // For glyph pass: fg color as foreground, bg with alpha=0
+            // so the shader mixes: mix(transparent, fg, glyph_alpha)
+            emit_quad(
+              fg_verts,
+              fg_vi,
+              gx0,
+              gy0,
+              gx1,
+              gy1,
+              u0,
+              v0,
+              u1,
+              v1,
+              fg_r,
+              fg_g,
+              fg_b,
+              fg_a,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+            )
+            fg_vi += 6 * floats_per_vertex
+            fg_count += 6
+          }
+          None => ()
+        }
+      None => ()
+    }
   }
-  let _ret = @ffi.gpu_draw_cells(vertices, vertex_count)
+  // Submit background pass
+  let bg_count = cells.length() * 6
+  let _ret1 = @ffi.gpu_draw_cells(bg_verts, bg_count)
+  // Submit glyph pass
+  if fg_count > 0 {
+    let _ret2 = @ffi.gpu_draw_cells(fg_verts, fg_count)
+  }
+}
+
+///|
+/// Emit a 6-vertex quad into a float array at the given offset.
+fn emit_quad(
+  verts : FixedArray[Float],
+  offset : Int,
+  x0 : Float,
+  y0 : Float,
+  x1 : Float,
+  y1 : Float,
+  u0 : Float,
+  v0 : Float,
+  u1 : Float,
+  v1 : Float,
+  fg_r : Float,
+  fg_g : Float,
+  fg_b : Float,
+  fg_a : Float,
+  bg_r : Float,
+  bg_g : Float,
+  bg_b : Float,
+  bg_a : Float,
+) -> Unit {
+  let f = 12 // floats per vertex
+  let mut vi = offset
+  // Vertex 0: top-left
+  verts[vi] = x0
+  verts[vi + 1] = y0
+  verts[vi + 2] = u0
+  verts[vi + 3] = v0
+  verts[vi + 4] = fg_r
+  verts[vi + 5] = fg_g
+  verts[vi + 6] = fg_b
+  verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r
+  verts[vi + 9] = bg_g
+  verts[vi + 10] = bg_b
+  verts[vi + 11] = bg_a
+  vi += f
+  // Vertex 1: top-right
+  verts[vi] = x1
+  verts[vi + 1] = y0
+  verts[vi + 2] = u1
+  verts[vi + 3] = v0
+  verts[vi + 4] = fg_r
+  verts[vi + 5] = fg_g
+  verts[vi + 6] = fg_b
+  verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r
+  verts[vi + 9] = bg_g
+  verts[vi + 10] = bg_b
+  verts[vi + 11] = bg_a
+  vi += f
+  // Vertex 2: bottom-left
+  verts[vi] = x0
+  verts[vi + 1] = y1
+  verts[vi + 2] = u0
+  verts[vi + 3] = v1
+  verts[vi + 4] = fg_r
+  verts[vi + 5] = fg_g
+  verts[vi + 6] = fg_b
+  verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r
+  verts[vi + 9] = bg_g
+  verts[vi + 10] = bg_b
+  verts[vi + 11] = bg_a
+  vi += f
+  // Vertex 3: top-right (second triangle)
+  verts[vi] = x1
+  verts[vi + 1] = y0
+  verts[vi + 2] = u1
+  verts[vi + 3] = v0
+  verts[vi + 4] = fg_r
+  verts[vi + 5] = fg_g
+  verts[vi + 6] = fg_b
+  verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r
+  verts[vi + 9] = bg_g
+  verts[vi + 10] = bg_b
+  verts[vi + 11] = bg_a
+  vi += f
+  // Vertex 4: bottom-right
+  verts[vi] = x1
+  verts[vi + 1] = y1
+  verts[vi + 2] = u1
+  verts[vi + 3] = v1
+  verts[vi + 4] = fg_r
+  verts[vi + 5] = fg_g
+  verts[vi + 6] = fg_b
+  verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r
+  verts[vi + 9] = bg_g
+  verts[vi + 10] = bg_b
+  verts[vi + 11] = bg_a
+  vi += f
+  // Vertex 5: bottom-left (second triangle)
+  verts[vi] = x0
+  verts[vi + 1] = y1
+  verts[vi + 2] = u0
+  verts[vi + 3] = v1
+  verts[vi + 4] = fg_r
+  verts[vi + 5] = fg_g
+  verts[vi + 6] = fg_b
+  verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r
+  verts[vi + 9] = bg_g
+  verts[vi + 10] = bg_b
+  verts[vi + 11] = bg_a
 }
 
 ///|
@@ -376,10 +402,11 @@ fn GpuBackend::draw_cursor_quad(self : GpuBackend, cursor : CursorQuad) -> Unit 
   if !cursor.visible {
     return
   }
-  let x = Float::from_int(cursor.col * self.cell_width)
-  let y = Float::from_int(cursor.row * self.cell_height)
-  let w = Float::from_int(self.cell_width)
-  let h = Float::from_int(self.cell_height)
+  let m = self.font.get_metrics()
+  let x = Float::from_int(cursor.col * m.cell_width)
+  let y = Float::from_int(cursor.row * m.cell_height)
+  let w = Float::from_int(m.cell_width)
+  let h = Float::from_int(m.cell_height)
   let style_int = match cursor.style {
     @terminal.Block => 0
     @terminal.Underline => 1
@@ -395,14 +422,15 @@ fn GpuBackend::draw_cursor_quad(self : GpuBackend, cursor : CursorQuad) -> Unit 
 ///|
 /// Get the cell dimensions from the font engine.
 pub fn GpuBackend::get_cell_size(self : GpuBackend) -> (Int, Int) {
-  (self.cell_width, self.cell_height)
+  let m = self.font.get_metrics()
+  (m.cell_width, m.cell_height)
 }
 
 ///|
 /// Shut down the GPU backend and font engine.
 pub fn GpuBackend::shutdown(self : GpuBackend) -> Unit {
   if self.initialized {
-    @ffi.font_shutdown()
+    self.font.shutdown()
     @ffi.gpu_shutdown()
     self.initialized = false
   }

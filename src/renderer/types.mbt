@@ -22,38 +22,7 @@ pub fn RgbaColor::black() -> RgbaColor {
   RgbaColor::opaque(b'\x00', b'\x00', b'\x00')
 }
 
-///|
-/// A glyph key used for texture atlas lookups.
-/// Identifies a unique glyph shape for caching.
-pub struct GlyphKey {
-  /// The character code point.
-  codepoint : Int
-  /// Whether bold is applied (affects glyph rasterization).
-  bold : Bool
-  /// Whether italic is applied.
-  italic : Bool
-  /// Font size in pixels (for atlas organization).
-  font_size : Int
-} derive(Show, Eq)
-
-///|
-/// A cached glyph in the texture atlas.
-pub struct CachedGlyph {
-  /// Atlas texture region: x offset in pixels.
-  atlas_x : Int
-  /// Atlas texture region: y offset in pixels.
-  atlas_y : Int
-  /// Glyph width in pixels.
-  width : Int
-  /// Glyph height in pixels.
-  height : Int
-  /// Bearing X (horizontal offset from pen position).
-  bearing_x : Int
-  /// Bearing Y (vertical offset from baseline).
-  bearing_y : Int
-  /// Advance width (how far the pen moves after this glyph).
-  advance : Int
-} derive(Show)
+// GlyphKey and CachedGlyph are in src/font/types.mbt — used via @font.
 
 ///|
 /// A vertex for the GPU renderer — represents one corner of a cell quad.
@@ -80,7 +49,7 @@ pub struct Vertex {
 
 ///|
 /// Configuration for the renderer.
-pub struct RendererConfig {
+pub(all) struct RendererConfig {
   /// Cell width in pixels.
   cell_width : Int
   /// Cell height in pixels.
@@ -130,8 +99,10 @@ pub struct CellQuad {
   /// Screen position (row, col).
   row : Int
   col : Int
+  /// Cell width in columns (1 for normal, 2 for wide CJK/emoji).
+  cell_cols : Int
   /// The glyph key (None for empty cells).
-  glyph : GlyphKey?
+  glyph : @font.GlyphKey?
   /// Foreground color (resolved from terminal Color).
   fg : RgbaColor
   /// Background color (resolved).

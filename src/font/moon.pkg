@@ -1,0 +1,11 @@
+import {
+  "trkbt10/hello_tty/src/font/ffi" @ffi,
+}
+
+options(
+  targets: {
+    "types.mbt": [ "native" ],
+    "atlas.mbt": [ "native" ],
+    "font.mbt": [ "native" ],
+  },
+)

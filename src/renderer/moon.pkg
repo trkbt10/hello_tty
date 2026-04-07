@@ -1,11 +1,11 @@
 import {
   "trkbt10/hello_tty/src/terminal" @terminal,
+  "trkbt10/hello_tty/src/font" @font,
   "trkbt10/hello_tty/src/renderer/ffi" @ffi,
 }
 
 options(
   targets: {
-    "atlas.mbt": [ "native" ],
     "gpu_backend.mbt": [ "native" ],
     "renderer.mbt": [ "native" ],
     "types.mbt": [ "native" ],

@@ -1,0 +1,6 @@
+options(
+  targets: {
+    "types.mbt": [ "native" ],
+    "input.mbt": [ "native" ],
+  },
+)

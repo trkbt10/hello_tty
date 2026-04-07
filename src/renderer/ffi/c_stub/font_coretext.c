@@ -161,19 +161,35 @@ int hello_tty_font_rasterize(
         char_count = 1;
     }
 
-    CGGlyph glyphs[2];
+    CGGlyph glyphs[2] = {0};
+    CTFontRef draw_font = font;
+    int need_release_draw_font = 0;
+
     if (!CTFontGetGlyphsForCharacters(font, chars, glyphs, char_count)) {
-        // Glyph not found — use .notdef (glyph 0)
-        glyphs[0] = 0;
+        // Glyph not in this font — try system font fallback (handles CJK, emoji, etc.)
+        CFStringRef str_ref = CFStringCreateWithCharacters(kCFAllocatorDefault, chars, char_count);
+        if (str_ref) {
+            CTFontRef fallback = CTFontCreateForString(font, str_ref, CFRangeMake(0, CFStringGetLength(str_ref)));
+            CFRelease(str_ref);
+            if (fallback) {
+                if (CTFontGetGlyphsForCharacters(fallback, chars, glyphs, char_count)) {
+                    draw_font = fallback;
+                    need_release_draw_font = 1;
+                } else {
+                    CFRelease(fallback);
+                    glyphs[0] = 0; // truly missing
+                }
+            }
+        }
     }
 
     CGGlyph glyph = glyphs[0];
 
-    // Get glyph bounding box and advance
+    // Get glyph bounding box and advance (using the actual font that has the glyph)
     CGRect bbox = CTFontGetBoundingRectsForGlyphs(
-        font, kCTFontOrientationDefault, &glyph, NULL, 1);
+        draw_font, kCTFontOrientationDefault, &glyph, NULL, 1);
     CGSize advance;
-    CTFontGetAdvancesForGlyphs(font, kCTFontOrientationDefault, &glyph, &advance, 1);
+    CTFontGetAdvancesForGlyphs(draw_font, kCTFontOrientationDefault, &glyph, &advance, 1);
 
     int glyph_width = (int)ceil(bbox.size.width) + 2; // +2 for padding
     int glyph_height = (int)ceil(bbox.size.height) + 2;
@@ -194,6 +210,7 @@ int hello_tty_font_rasterize(
 
     int bitmap_size = glyph_width * glyph_height;
     if (bitmap_size > bitmap_max_len) {
+        if (need_release_draw_font) CFRelease(draw_font);
         if (italic && font != g_font.bold_font && font != g_font.font)
             CFRelease(font);
         return -1; // Buffer too small
@@ -228,9 +245,11 @@ int hello_tty_font_rasterize(
         -bbox.origin.y + 1.0
     );
 
-    CTFontDrawGlyphs(font, &glyph, &position, 1, ctx);
+    CTFontDrawGlyphs(draw_font, &glyph, &position, 1, ctx);
     CGContextRelease(ctx);
 
+    if (need_release_draw_font)
+        CFRelease(draw_font);
     if (italic && font != g_font.bold_font && font != g_font.font)
         CFRelease(font);
 
