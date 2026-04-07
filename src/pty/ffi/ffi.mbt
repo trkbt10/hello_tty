@@ -58,3 +58,18 @@ pub extern "C" fn pty_poll_read(fd : Int, timeout_ms : Int) -> Int = "hello_tty_
 /// Does not return on success.
 #borrow(shell)
 pub extern "C" fn pty_exec_shell(shell : Bytes, shell_len : Int) = "hello_tty_pty_exec_shell"
+
+///|
+/// Fork a child PTY and exec a shell in a single C call.
+/// This avoids returning to MoonBit in the child process (GC safety).
+/// shell: UTF-8 path. result_buf[0] = master_fd.
+/// Returns: child PID to parent, -1 on error.
+#borrow(shell)
+#borrow(result_buf)
+pub extern "C" fn pty_fork_exec(
+  shell : Bytes,
+  shell_len : Int,
+  rows : Int,
+  cols : Int,
+  result_buf : FixedArray[Int],
+) -> Int = "hello_tty_pty_fork_exec"

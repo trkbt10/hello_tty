@@ -10,7 +10,8 @@
 
 // Only compile stubs when no real adapter is available.
 // On macOS, platform_macos.m provides the real implementations.
-#if !defined(__APPLE__)
+// Use stubs unless the macOS adapter is explicitly enabled via HELLO_TTY_PLATFORM_MACOS.
+#if !defined(HELLO_TTY_PLATFORM_MACOS)
 
 int hello_tty_platform_init(void) {
   // Stub: no windowing system initialized
@@ -70,4 +71,4 @@ int hello_tty_platform_clipboard_get(uint8_t *buf, int max_len) {
   return -1;
 }
 
-#endif // !__APPLE__
+#endif // !HELLO_TTY_PLATFORM_MACOS

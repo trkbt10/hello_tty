@@ -244,22 +244,31 @@ fn run_headless(app : @app.App) -> Unit {
 
 ///|
 /// Find the pty_reader binary path relative to the main binary.
+/// Build output layout: cmd/main/main.exe, cmd/pty_reader/pty_reader.exe
+/// So from main.exe: go up one dir (cmd/main/ → cmd/) then into pty_reader/
 fn find_pty_reader_binary() -> String {
   let args = @env.args()
   if args.length() > 0 {
     let main_path = args[0]
-    // Find last '/' and replace the binary name
+    // Find the second-to-last '/' to get the parent of main's directory
     let mut last_slash = -1
+    let mut second_last_slash = -1
     let mut idx = 0
     for c in main_path {
       if c == '/' {
+        second_last_slash = last_slash
         last_slash = idx
       }
       idx += 1
     }
+    if second_last_slash >= 0 {
+      // e.g. .../cmd/main/main.exe → .../cmd/pty_reader/pty_reader.exe
+      return main_path[0:second_last_slash + 1].to_string() +
+        "pty_reader/pty_reader.exe"
+    }
     if last_slash >= 0 {
-      return main_path[0:last_slash + 1].to_string() + "pty_reader"
+      return main_path[0:last_slash + 1].to_string() + "pty_reader.exe"
     }
   }
-  "./pty_reader"
+  "./pty_reader.exe"
 }

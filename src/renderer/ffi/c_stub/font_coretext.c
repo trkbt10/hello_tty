@@ -4,7 +4,10 @@
 // Uses CTFont for glyph outlines and CGBitmapContext for rasterization
 // to grayscale (A8) bitmaps suitable for atlas upload.
 
-#if defined(__APPLE__)
+// CoreText font rasterization requires macOS frameworks.
+// Only compiled when explicitly building via the macOS adapter Makefile.
+// When building directly via moon build, stub implementations are used.
+#if defined(__APPLE__) && defined(HELLO_TTY_PLATFORM_MACOS)
 
 #include "gpu_ffi.h"
 
@@ -249,4 +252,4 @@ void hello_tty_font_shutdown(void) {
     g_font.initialized = 0;
 }
 
-#endif // __APPLE__
+#endif // __APPLE__ && HELLO_TTY_PLATFORM_MACOS

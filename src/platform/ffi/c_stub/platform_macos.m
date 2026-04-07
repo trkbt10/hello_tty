@@ -8,11 +8,18 @@
 //   - Vulkan surface via MoltenVK (VK_EXT_metal_surface)
 //
 // This file is Objective-C (.m) and must be compiled with -framework Cocoa.
+//
+// IMPORTANT: This file is compiled as part of the MoonBit native-stub,
+// but requires macOS frameworks that moon build cannot link automatically.
+// Set HELLO_TTY_PLATFORM_MACOS=1 when building via the adapters/macos Makefile.
+// When building directly via moon build, the stub implementations from
+// platform_stub.c are used instead (guarded by !__APPLE__ or this flag).
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) && defined(HELLO_TTY_PLATFORM_MACOS)
 
 #import <Cocoa/Cocoa.h>
 #import <Carbon/Carbon.h>  // For kVK_ key codes
+#import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 
 #include <stdint.h>
@@ -512,4 +519,4 @@ int hello_tty_platform_clipboard_get(uint8_t *buf, int max_len) {
     }
 }
 
-#endif // __APPLE__
+#endif // __APPLE__ && HELLO_TTY_PLATFORM_MACOS

@@ -28,31 +28,28 @@ pub fn Pty::close(self : Pty) -> Unit {
 ///|
 /// Fork a child process attached to a new PTY.
 /// Returns a `PtyChild` in the parent process.
-/// In the child process, this function does not return — it execs the shell.
+///
+/// Uses a single C call (pty_fork_exec) that handles both fork and exec
+/// entirely in C, avoiding MoonBit GC operations in the child process
+/// (which would corrupt the GC state after fork).
 pub fn fork_with_shell(
   shell? : String = "/bin/bash",
   rows? : Int = 24,
   cols? : Int = 80,
 ) -> PtyChild raise PtyError {
+  let shell_bytes = @utf8.encode(shell)
   let result_buf : FixedArray[Int] = FixedArray::make(1, 0)
-  let pid = @ffi.pty_forkpty(result_buf)
+  let pid = @ffi.pty_fork_exec(
+    shell_bytes,
+    shell_bytes.length(),
+    rows,
+    cols,
+    result_buf,
+  )
   if pid < 0 {
     raise ForkFailed("forkpty() failed")
   }
-  if pid == 0 {
-    // Child process: set window size and exec the shell
-    let shell_bytes = @utf8.encode(shell)
-    @ffi.pty_exec_shell(shell_bytes, shell_bytes.length())
-    // exec_shell does not return on success; if we reach here, it failed
-    raise ForkFailed("exec failed for shell: " + shell)
-  }
-  // Parent process
   let master_fd = result_buf[0]
-  let ws_ret = @ffi.pty_set_winsize(master_fd, rows, cols)
-  if ws_ret < 0 {
-    // Non-fatal: log warning but continue
-    ()
-  }
   { master_fd, pid, rows, cols }
 }
 

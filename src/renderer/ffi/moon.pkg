@@ -4,6 +4,7 @@ options(
     "c_stub/gpu_vulkan.c",
     "c_stub/font_coretext.c",
     "c_stub/font_freetype.c",
+    "c_stub/font_stub.c",
   ],
   targets: { "ffi.mbt": [ "native" ] },
 )

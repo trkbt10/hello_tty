@@ -8,12 +8,32 @@
 //   - The atlas texture as a combined image sampler
 //
 // Designed to be driven by the MoonBit renderer's RenderCommand sequence.
+//
+// On macOS, the primary rendering path is CoreText/CoreGraphics in the
+// Swift adapter. This Vulkan backend is optional and requires the Vulkan SDK.
+// If vulkan/vulkan.h is not available, stub implementations are provided.
 
 #include "gpu_ffi.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+// Check for Vulkan SDK availability.
+// Set HELLO_TTY_HAS_VULKAN=1 to enable, or it auto-detects via __has_include.
+#ifndef HELLO_TTY_HAS_VULKAN
+#  if defined(__has_include)
+#    if __has_include(<vulkan/vulkan.h>)
+#      define HELLO_TTY_HAS_VULKAN 1
+#    else
+#      define HELLO_TTY_HAS_VULKAN 0
+#    endif
+#  else
+#    define HELLO_TTY_HAS_VULKAN 0
+#  endif
+#endif
+
+#if HELLO_TTY_HAS_VULKAN
 
 // ---------- Vulkan headers ----------
 // We use the Vulkan loader; link with -lvulkan.
@@ -1097,3 +1117,39 @@ int hello_tty_gpu_frame_end(void) {
 
     return 0;
 }
+
+#else // !HELLO_TTY_HAS_VULKAN
+
+// ---------- Stub implementations when Vulkan SDK is not available ----------
+// All GPU functions return failure/no-op.
+// On macOS, the primary rendering path is CoreText in the Swift adapter,
+// so these stubs are sufficient for building and running.
+
+#include <stdio.h>
+
+int hello_tty_gpu_init(uint64_t surface_handle, int width, int height) {
+    (void)surface_handle; (void)width; (void)height;
+    fprintf(stderr, "hello_tty: Vulkan SDK not available, GPU backend disabled\n");
+    return -1;
+}
+int hello_tty_gpu_resize(int width, int height) { (void)width; (void)height; return -1; }
+void hello_tty_gpu_shutdown(void) {}
+int hello_tty_gpu_atlas_create(int width, int height) { (void)width; (void)height; return -1; }
+int hello_tty_gpu_atlas_upload(int x, int y, int rw, int rh, const uint8_t *data, int len) {
+    (void)x; (void)y; (void)rw; (void)rh; (void)data; (void)len; return -1;
+}
+int hello_tty_gpu_frame_begin(void) { return -1; }
+void hello_tty_gpu_frame_clear(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    (void)r; (void)g; (void)b; (void)a;
+}
+int hello_tty_gpu_draw_cells(const float *vertices, int vertex_count) {
+    (void)vertices; (void)vertex_count; return -1;
+}
+void hello_tty_gpu_draw_cursor(float x, float y, float w, float h,
+    uint8_t r, uint8_t g, uint8_t b, uint8_t a, int style) {
+    (void)x; (void)y; (void)w; (void)h;
+    (void)r; (void)g; (void)b; (void)a; (void)style;
+}
+int hello_tty_gpu_frame_end(void) { return -1; }
+
+#endif // HELLO_TTY_HAS_VULKAN

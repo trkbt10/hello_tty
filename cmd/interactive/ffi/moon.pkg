@@ -1,0 +1,4 @@
+options(
+  "native-stub": [ "c_stub/raw_mode.c", "c_stub/pty_session.c" ],
+  targets: { "ffi.mbt": [ "native" ] },
+)

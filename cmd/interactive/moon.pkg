@@ -1,0 +1,11 @@
+import {
+  "trkbt10/hello_tty/src/vt_parser" @vt_parser,
+  "trkbt10/hello_tty/src/terminal" @terminal,
+  "trkbt10/hello_tty/cmd/interactive/ffi" @ffi,
+  "moonbitlang/core/encoding/utf8" @utf8,
+}
+
+options(
+  "is-main": true,
+  targets: { "main.mbt": [ "native" ] },
+)
