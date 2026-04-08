@@ -1,7 +1,4 @@
 options(
-  "native-stub": [
-    "c_stub/gpu_moonbit_glue.c",
-    "c_stub/gpu_vulkan.c",
-  ],
+  "native-stub": [ "c_stub/gpu_moonbit_glue.c", "c_stub/gpu_vulkan.c" ],
   targets: { "ffi.mbt": [ "native" ] },
 )

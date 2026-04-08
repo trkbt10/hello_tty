@@ -35,7 +35,9 @@ fn main {
     }
   }
   if platform_ok {
-    run_windowed(app, config, renderer_config, gpu_renderer, platform, win_width, win_height)
+    run_windowed(
+      app, config, renderer_config, gpu_renderer, platform, win_width, win_height,
+    )
   } else {
     run_headless(app)
   }
@@ -55,9 +57,7 @@ fn run_windowed(
   win_height : Int,
 ) -> Unit {
   // Create window
-  let _window = try {
-    platform.create_window(win_width, win_height)
-  } catch {
+  let _window = platform.create_window(win_width, win_height) catch {
     _ => {
       println("Window creation failed")
       return
@@ -79,9 +79,7 @@ fn run_windowed(
   // Set up IPC for PTY reader subprocess
   let pid = @app.current_pid()
   let socket_path = "/tmp/hello_tty_" + pid.to_string() + ".sock"
-  let server = try {
-    @socket.Server::new(socket_path)
-  } catch {
+  let server = @socket.Server::new(socket_path) catch {
     _ => {
       println("IPC server creation failed")
       return
@@ -89,15 +87,13 @@ fn run_windowed(
   }
   // Spawn PTY reader subprocess
   let pty_reader_path = find_pty_reader_binary()
-  let child_pid = try {
-    @app.spawn_pty_reader(
-      pty_reader_path,
-      socket_path,
-      config.shell,
-      config.rows,
-      config.cols,
-    )
-  } catch {
+  let child_pid = @app.spawn_pty_reader(
+    pty_reader_path,
+    socket_path,
+    config.shell,
+    config.rows,
+    config.cols,
+  ) catch {
     _ => {
       println("Failed to spawn PTY reader")
       server.close()
@@ -105,11 +101,7 @@ fn run_windowed(
     }
   }
   // Accept IPC connection from PTY reader
-  let conn = try {
-    server.poll_accept(timeout_ms=5000)
-  } catch {
-    _ => None
-  }
+  let conn = server.poll_accept(timeout_ms=5000) catch { _ => None }
   match conn {
     None => {
       println("PTY reader did not connect in time")
@@ -122,9 +114,7 @@ fn run_windowed(
       // Main event loop
       run_event_loop(app, gpu, gpu_ok, gpu_renderer, platform, ipc_conn)
       // Shutdown IPC
-      try {
-        ipc_conn.send(@app.IpcMessage::Shutdown.serialize())
-      } catch {
+      ipc_conn.send(@app.IpcMessage::Shutdown.serialize()) catch {
         _ => ()
       }
       ipc_conn.close()
@@ -151,17 +141,9 @@ fn run_event_loop(
   ignore(platform)
   while app.is_running() {
     // 1. Poll IPC for PTY output (non-blocking)
-    let ipc_ready = try {
-      ipc_conn.poll(timeout_ms=1)
-    } catch {
-      _ => false
-    }
+    let ipc_ready = ipc_conn.poll(timeout_ms=1) catch { _ => false }
     if ipc_ready {
-      let msg_str = try {
-        ipc_conn.recv()
-      } catch {
-        _ => None
-      }
+      let msg_str = ipc_conn.recv() catch { _ => None }
       match msg_str {
         None => break // PTY reader disconnected
         Some(s) => {
@@ -182,9 +164,7 @@ fn run_event_loop(
         let pty_input = app.handle_platform_event(event)
         if pty_input.length() > 0 {
           let msg = @app.IpcMessage::KeyInput(pty_input)
-          try {
-            ipc_conn.send(msg.serialize())
-          } catch {
+          ipc_conn.send(msg.serialize()) catch {
             _ => break
           }
         }
@@ -192,9 +172,7 @@ fn run_event_loop(
         if event is @platform.Resize(width~, height~) {
           let (rows, cols) = gpu_renderer.calculate_grid_size(width, height)
           let resize_msg = @app.IpcMessage::Resize(rows~, cols~)
-          try {
-            ipc_conn.send(resize_msg.serialize())
-          } catch {
+          ipc_conn.send(resize_msg.serialize()) catch {
             _ => ()
           }
         }
@@ -207,9 +185,7 @@ fn run_event_loop(
     // 3. Render
     if gpu_ok {
       let commands = app.render()
-      try {
-        gpu.execute_frame(commands)
-      } catch {
+      gpu.execute_frame(commands) catch {
         _ => () // Swapchain error — will recover
       }
     }

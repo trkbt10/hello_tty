@@ -64,8 +64,7 @@ pub extern "C" fn pty_exec_shell(shell : Bytes, shell_len : Int) = "hello_tty_pt
 /// This avoids returning to MoonBit in the child process (GC safety).
 /// shell: UTF-8 path. result_buf[0] = master_fd.
 /// Returns: child PID to parent, -1 on error.
-#borrow(shell)
-#borrow(result_buf)
+#borrow(shell, result_buf)
 pub extern "C" fn pty_fork_exec(
   shell : Bytes,
   shell_len : Int,

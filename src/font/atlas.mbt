@@ -46,7 +46,10 @@ fn glyph_cache_key(key : GlyphKey) -> String {
 }
 
 ///|
-pub fn TextureAtlas::lookup(self : TextureAtlas, key : GlyphKey) -> CachedGlyph? {
+pub fn TextureAtlas::lookup(
+  self : TextureAtlas,
+  key : GlyphKey,
+) -> CachedGlyph? {
   self.cache.get(glyph_cache_key(key))
 }
 

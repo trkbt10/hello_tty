@@ -5,8 +5,8 @@ import {
 
 options(
   targets: {
-    "types.mbt": [ "native" ],
     "atlas.mbt": [ "native" ],
     "font.mbt": [ "native" ],
+    "types.mbt": [ "native" ],
   },
 )

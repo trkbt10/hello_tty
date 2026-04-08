@@ -1,9 +1,11 @@
 import {
   "trkbt10/hello_tty/src/vt_parser" @vt_parser,
+  "moonbitlang/core/bench" @bench,
 }
 
 options(
   targets: {
+    "bench_bench.mbt": [ "native" ],
     "cell.mbt": [ "native" ],
     "charwidth.mbt": [ "native" ],
     "cursor.mbt": [ "native" ],
@@ -11,8 +13,7 @@ options(
     "handler.mbt": [ "native" ],
     "screen.mbt": [ "native" ],
     "scrollback.mbt": [ "native" ],
-    "types.mbt": [ "native" ],
     "tests.mbt": [ "native" ],
-    "bench_bench.mbt": [ "native" ],
+    "types.mbt": [ "native" ],
   },
 )

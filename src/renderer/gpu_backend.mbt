@@ -26,8 +26,8 @@ pub suberror GpuError {
 
 ///|
 pub fn GpuBackend::new(
-  config~ : RendererConfig = RendererConfig::default(),
-  font~ : @font.FontEngine = @font.FontEngine::new(),
+  config? : RendererConfig = RendererConfig::default(),
+  font? : @font.FontEngine = @font.FontEngine::new(),
 ) -> GpuBackend {
   { config, font, device_initialized: false }
 }
@@ -35,7 +35,7 @@ pub fn GpuBackend::new(
 ///|
 /// Initialize shared GPU resources: device, pipelines, font engine, atlas.
 /// Must be called once before creating any surfaces.
-pub fn GpuBackend::init_device(self : GpuBackend) -> Unit!GpuError {
+pub fn GpuBackend::init_device(self : GpuBackend) -> Unit raise GpuError {
   if self.device_initialized {
     return
   }
@@ -44,9 +44,7 @@ pub fn GpuBackend::init_device(self : GpuBackend) -> Unit!GpuError {
     raise InitFailed("GPU device initialization failed")
   }
   // Font engine
-  try {
-    self.font.init!()
-  } catch {
+  self.font.init() catch {
     @font.FontInitFailed(msg) => raise FontError(msg)
     _ => raise FontError("Font initialization failed")
   }
@@ -70,9 +68,9 @@ pub fn GpuBackend::create_surface(
   surface_handle : Int,
   width : Int,
   height : Int,
-) -> Int!GpuError {
+) -> Int raise GpuError {
   if !self.device_initialized {
-    self.init_device!()
+    self.init_device()
   }
   let sid = @ffi.gpu_surface_create(surface_handle, 0, width, height)
   if sid < 0 {
@@ -160,16 +158,14 @@ pub fn GpuBackend::init(
   surface_handle : Int,
   width : Int,
   height : Int,
-) -> Unit!GpuError {
+) -> Unit raise GpuError {
   if !self.device_initialized {
     // Use legacy init which creates device + surface 0
     let ret = @ffi.gpu_init(surface_handle, 0, width, height)
     if ret < 0 {
       raise InitFailed("GPU initialization failed")
     }
-    try {
-      self.font.init!()
-    } catch {
+    self.font.init() catch {
       @font.FontInitFailed(msg) => raise FontError(msg)
       _ => raise FontError("Font initialization failed")
     }
@@ -229,7 +225,9 @@ fn GpuBackend::draw_cell_quads(
   let mut fg_count = 0
   for i in 0..<cells.length() {
     let cell = cells[i]
-    if cell.cell_cols == 0 { continue }
+    if cell.cell_cols == 0 {
+      continue
+    }
     let cell_x = Float::from_int(cell.col) * cw
     let cell_y = Float::from_int(cell.row) * ch
     let cell_w = cw * Float::from_int(cell.cell_cols)
@@ -242,11 +240,24 @@ fn GpuBackend::draw_cell_quads(
     let fg_b = Float::from_int(cell.fg.b.to_int()) / 255.0
     let fg_a = Float::from_int(cell.fg.a.to_int()) / 255.0
     emit_quad(
-      bg_verts, bg_vi,
-      cell_x, cell_y, cell_x + cell_w, cell_y + ch,
-      0.0, 0.0, 0.0, 0.0,
-      bg_r, bg_g, bg_b, bg_a,
-      bg_r, bg_g, bg_b, bg_a,
+      bg_verts,
+      bg_vi,
+      cell_x,
+      cell_y,
+      cell_x + cell_w,
+      cell_y + ch,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      bg_r,
+      bg_g,
+      bg_b,
+      bg_a,
+      bg_r,
+      bg_g,
+      bg_b,
+      bg_a,
     )
     bg_vi += 6 * floats_per_vertex
     match cell.glyph {
@@ -273,11 +284,8 @@ fn GpuBackend::draw_cell_quads(
             let u1 = Float::from_int(glyph.atlas_x + glyph.width) / atlas_w
             let v1 = Float::from_int(glyph.atlas_y + glyph.height) / atlas_h
             emit_quad(
-              fg_verts, fg_vi,
-              gx0, gy0, gx1, gy1,
-              u0, v0, u1, v1,
-              fg_r, fg_g, fg_b, fg_a,
-              0.0, 0.0, 0.0, 0.0,
+              fg_verts, fg_vi, gx0, gy0, gx1, gy1, u0, v0, u1, v1, fg_r, fg_g, fg_b,
+              fg_a, 0.0, 0.0, 0.0, 0.0,
             )
             fg_vi += 6 * floats_per_vertex
             fg_count += 6
@@ -318,35 +326,83 @@ fn emit_quad(
 ) -> Unit {
   let f = 12
   let mut vi = offset
-  verts[vi] = x0; verts[vi + 1] = y0
-  verts[vi + 2] = u0; verts[vi + 3] = v0
-  verts[vi + 4] = fg_r; verts[vi + 5] = fg_g; verts[vi + 6] = fg_b; verts[vi + 7] = fg_a
-  verts[vi + 8] = bg_r; verts[vi + 9] = bg_g; verts[vi + 10] = bg_b; verts[vi + 11] = bg_a
+  verts[vi] = x0
+  verts[vi + 1] = y0
+  verts[vi + 2] = u0
+  verts[vi + 3] = v0
+  verts[vi + 4] = fg_r
+  verts[vi + 5] = fg_g
+  verts[vi + 6] = fg_b
+  verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r
+  verts[vi + 9] = bg_g
+  verts[vi + 10] = bg_b
+  verts[vi + 11] = bg_a
   vi += f
-  verts[vi] = x1; verts[vi + 1] = y0
-  verts[vi + 2] = u1; verts[vi + 3] = v0
-  verts[vi + 4] = fg_r; verts[vi + 5] = fg_g; verts[vi + 6] = fg_b; verts[vi + 7] = fg_a
-  verts[vi + 8] = bg_r; verts[vi + 9] = bg_g; verts[vi + 10] = bg_b; verts[vi + 11] = bg_a
+  verts[vi] = x1
+  verts[vi + 1] = y0
+  verts[vi + 2] = u1
+  verts[vi + 3] = v0
+  verts[vi + 4] = fg_r
+  verts[vi + 5] = fg_g
+  verts[vi + 6] = fg_b
+  verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r
+  verts[vi + 9] = bg_g
+  verts[vi + 10] = bg_b
+  verts[vi + 11] = bg_a
   vi += f
-  verts[vi] = x0; verts[vi + 1] = y1
-  verts[vi + 2] = u0; verts[vi + 3] = v1
-  verts[vi + 4] = fg_r; verts[vi + 5] = fg_g; verts[vi + 6] = fg_b; verts[vi + 7] = fg_a
-  verts[vi + 8] = bg_r; verts[vi + 9] = bg_g; verts[vi + 10] = bg_b; verts[vi + 11] = bg_a
+  verts[vi] = x0
+  verts[vi + 1] = y1
+  verts[vi + 2] = u0
+  verts[vi + 3] = v1
+  verts[vi + 4] = fg_r
+  verts[vi + 5] = fg_g
+  verts[vi + 6] = fg_b
+  verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r
+  verts[vi + 9] = bg_g
+  verts[vi + 10] = bg_b
+  verts[vi + 11] = bg_a
   vi += f
-  verts[vi] = x1; verts[vi + 1] = y0
-  verts[vi + 2] = u1; verts[vi + 3] = v0
-  verts[vi + 4] = fg_r; verts[vi + 5] = fg_g; verts[vi + 6] = fg_b; verts[vi + 7] = fg_a
-  verts[vi + 8] = bg_r; verts[vi + 9] = bg_g; verts[vi + 10] = bg_b; verts[vi + 11] = bg_a
+  verts[vi] = x1
+  verts[vi + 1] = y0
+  verts[vi + 2] = u1
+  verts[vi + 3] = v0
+  verts[vi + 4] = fg_r
+  verts[vi + 5] = fg_g
+  verts[vi + 6] = fg_b
+  verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r
+  verts[vi + 9] = bg_g
+  verts[vi + 10] = bg_b
+  verts[vi + 11] = bg_a
   vi += f
-  verts[vi] = x1; verts[vi + 1] = y1
-  verts[vi + 2] = u1; verts[vi + 3] = v1
-  verts[vi + 4] = fg_r; verts[vi + 5] = fg_g; verts[vi + 6] = fg_b; verts[vi + 7] = fg_a
-  verts[vi + 8] = bg_r; verts[vi + 9] = bg_g; verts[vi + 10] = bg_b; verts[vi + 11] = bg_a
+  verts[vi] = x1
+  verts[vi + 1] = y1
+  verts[vi + 2] = u1
+  verts[vi + 3] = v1
+  verts[vi + 4] = fg_r
+  verts[vi + 5] = fg_g
+  verts[vi + 6] = fg_b
+  verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r
+  verts[vi + 9] = bg_g
+  verts[vi + 10] = bg_b
+  verts[vi + 11] = bg_a
   vi += f
-  verts[vi] = x0; verts[vi + 1] = y1
-  verts[vi + 2] = u0; verts[vi + 3] = v1
-  verts[vi + 4] = fg_r; verts[vi + 5] = fg_g; verts[vi + 6] = fg_b; verts[vi + 7] = fg_a
-  verts[vi + 8] = bg_r; verts[vi + 9] = bg_g; verts[vi + 10] = bg_b; verts[vi + 11] = bg_a
+  verts[vi] = x0
+  verts[vi + 1] = y1
+  verts[vi + 2] = u0
+  verts[vi + 3] = v1
+  verts[vi + 4] = fg_r
+  verts[vi + 5] = fg_g
+  verts[vi + 6] = fg_b
+  verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r
+  verts[vi + 9] = bg_g
+  verts[vi + 10] = bg_b
+  verts[vi + 11] = bg_a
 }
 
 ///|
@@ -371,8 +427,14 @@ fn GpuBackend::draw_cursor_quad(
   }
   @ffi.gpu_draw_cursor(
     surface_id,
-    x, y, w, h,
-    cursor.color.r, cursor.color.g, cursor.color.b, cursor.color.a,
+    x,
+    y,
+    w,
+    h,
+    cursor.color.r,
+    cursor.color.g,
+    cursor.color.b,
+    cursor.color.a,
     style_int,
   )
 }

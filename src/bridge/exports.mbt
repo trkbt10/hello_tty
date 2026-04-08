@@ -12,7 +12,7 @@
 
 ///|
 /// Global bridge state.
-struct BridgeState {
+priv struct BridgeState {
   sessions : @session.SessionManager
   layout : @layout.LayoutManager
   theme : @theme.Theme
@@ -22,7 +22,6 @@ struct BridgeState {
   /// Each panel's TerminalGPUView creates its own surface; this map
   /// connects sessions to their rendering surface.
   surface_map : Map[Int, Int]
-  mut initialized : Bool
 }
 
 ///|
@@ -35,13 +34,12 @@ let bridge_state : BridgeState = {
     renderer: None,
     gpu_backend: None,
     surface_map: {},
-    initialized: false,
   }
 }
 
 ///|
 /// Result buffer for returning data across FFI boundary.
-struct ResultBuf {
+priv struct ResultBuf {
   mut result_bytes : Bytes
 }
 
@@ -57,7 +55,6 @@ let result_buf : ResultBuf = { result_bytes: Bytes::new(0) }
 pub fn ffi_create_session(rows_bytes : Bytes, cols_bytes : Bytes) -> Bytes {
   let rows = bytes_to_int(rows_bytes, 24)
   let cols = bytes_to_int(cols_bytes, 80)
-  bridge_state.initialized = true
   let (session_id, master_fd) = bridge_state.sessions.create_session(rows, cols)
   let m : Map[String, Json] = {
     "id": session_id.to_json(),
@@ -79,7 +76,11 @@ pub fn ffi_destroy_session(id_bytes : Bytes) -> Int {
 /// Switch active session. Returns 0 on success, -1 if session not found.
 pub fn ffi_switch_session(id_bytes : Bytes) -> Int {
   let id = bytes_to_int(id_bytes, -1)
-  if bridge_state.sessions.switch_to(id) { 0 } else { -1 }
+  if bridge_state.sessions.switch_to(id) {
+    0
+  } else {
+    -1
+  }
 }
 
 ///|
@@ -114,11 +115,9 @@ pub fn ffi_get_active_session() -> Int {
 pub fn ffi_init(rows_bytes : Bytes, cols_bytes : Bytes) -> Int {
   let rows = bytes_to_int(rows_bytes, 24)
   let cols = bytes_to_int(cols_bytes, 80)
-  bridge_state.initialized = true
   // Create a session if none exists
   if bridge_state.sessions.count() == 0 {
     let _ = bridge_state.sessions.create_session(rows, cols)
-
   }
   0
 }
@@ -233,7 +232,8 @@ fn serialize_session_grid(session : @session.Session) -> Bytes {
   let cursor = terminal.get_cursor()
   let theme = bridge_state.theme
   // Determine dirty region
-  let (dr_top, dr_left, dr_bottom, dr_right, is_full) = match grid.get_dirty_rect() {
+  let (dr_top, dr_left, dr_bottom, dr_right, is_full) = match
+    grid.get_dirty_rect() {
     Some((t, l, b, r)) => {
       let full = grid.dirty_all
       (t, l, b, r, full)
@@ -299,9 +299,9 @@ fn serialize_session_grid(session : @session.Session) -> Bytes {
   }
   sb.write_string(",\"cells\":[")
   let mut first = true
-  for row in dr_top..=dr_bottom {
+  for row in dr_top..<=dr_bottom {
     let line = grid.lines[row]
-    for col in dr_left..=dr_right {
+    for col in dr_left..<=dr_right {
       let cell = line.get(col)
       if cell.char == '\u0000' {
         continue
@@ -453,9 +453,7 @@ fn ensure_gpu_initialized() -> Unit {
   )
   // init_device initializes the font engine via CoreText, giving us
   // accurate cell metrics from the actual rasterizer.
-  try {
-    gpu.init_device()
-  } catch {
+  gpu.init_device() catch {
     _ => ()
   }
   let (cw, ch) = gpu.get_cell_size()
@@ -521,10 +519,7 @@ pub fn ffi_pixel_to_grid(
   let (cell_w, cell_h) = get_cell_size_logical_f()
   let col = Int::max((Float::from_int(x_px) / cell_w).to_int(), 0)
   // y_px is from bottom (macOS coordinate system), row 0 is at top
-  let row = Int::max(
-    (Float::from_int(view_height - y_px) / cell_h).to_int(),
-    0,
-  )
+  let row = Int::max((Float::from_int(view_height - y_px) / cell_h).to_int(), 0)
   let s = row.to_string() + "," + col.to_string()
   result_buf.result_bytes = @utf8.encode(s)
   result_buf.result_bytes
@@ -549,12 +544,7 @@ pub fn ffi_gpu_register_surface(
   ensure_gpu_initialized()
   // Ensure device is initialized
   match bridge_state.gpu_backend {
-    Some(gpu) =>
-      try {
-        gpu.init_device()
-      } catch {
-        _ => return -1
-      }
+    Some(gpu) => gpu.init_device() catch { _ => return -1 }
     None => return -1
   }
   if session_id >= 0 && surface_id >= 0 {
@@ -613,7 +603,7 @@ pub fn ffi_gpu_init(
   match bridge_state.gpu_backend {
     Some(gpu) =>
       try {
-        gpu.init!(surface_handle, width, height)
+        gpu.init(surface_handle, width, height)
         0
       } catch {
         _ => -1
@@ -625,11 +615,16 @@ pub fn ffi_gpu_init(
 ///|
 /// Render the current terminal state to the GPU (active session, legacy surface).
 pub fn ffi_render_frame() -> Int {
-  match (bridge_state.sessions.active_session(), bridge_state.renderer, bridge_state.gpu_backend) {
+  match
+    (
+      bridge_state.sessions.active_session(),
+      bridge_state.renderer,
+      bridge_state.gpu_backend,
+    ) {
     (Some(session), Some(renderer), Some(gpu)) => {
       let commands = renderer.render(session.get_terminal())
       try {
-        gpu.execute_frame!(commands)
+        gpu.execute_frame(commands)
         0
       } catch {
         _ => -1
@@ -647,10 +642,14 @@ pub fn ffi_render_frame_for(session_id_bytes : Bytes) -> Int {
     Some(sid) => sid
     None => return -1
   }
-  match (bridge_state.sessions.get_session(session_id), bridge_state.renderer, bridge_state.gpu_backend) {
+  match
+    (
+      bridge_state.sessions.get_session(session_id),
+      bridge_state.renderer,
+      bridge_state.gpu_backend,
+    ) {
     (Some(session), Some(renderer), Some(gpu)) => {
       let terminal = session.get_terminal()
-      let grid = terminal.get_grid()
       let commands = renderer.render(terminal)
       try {
         gpu.execute_frame_on(surface_id, commands)
@@ -671,7 +670,7 @@ pub fn ffi_gpu_resize(width_bytes : Bytes, height_bytes : Bytes) -> Int {
   match bridge_state.gpu_backend {
     Some(gpu) =>
       try {
-        gpu.resize!(width, height)
+        gpu.resize(width, height)
         0
       } catch {
         _ => -1
@@ -688,7 +687,6 @@ pub fn ffi_gpu_resize(width_bytes : Bytes, height_bytes : Bytes) -> Int {
 pub fn ffi_create_tab(rows_bytes : Bytes, cols_bytes : Bytes) -> Bytes {
   let rows = bytes_to_int(rows_bytes, 24)
   let cols = bytes_to_int(cols_bytes, 80)
-  bridge_state.initialized = true
   let (tab_id, panel_id, master_fd) = bridge_state.layout.create_tab(rows, cols)
   // Get the session_id from the panel
   let session_id = match bridge_state.layout.focused_panel() {
@@ -717,19 +715,31 @@ pub fn ffi_close_tab(tab_id_bytes : Bytes) -> Int {
 /// Switch to a tab by ID.
 pub fn ffi_switch_tab(tab_id_bytes : Bytes) -> Int {
   let tab_id = bytes_to_int(tab_id_bytes, -1)
-  if bridge_state.layout.switch_tab(tab_id) { 0 } else { -1 }
+  if bridge_state.layout.switch_tab(tab_id) {
+    0
+  } else {
+    -1
+  }
 }
 
 ///|
 /// Switch to the next tab. Returns 0 on success.
 pub fn ffi_next_tab() -> Int {
-  if bridge_state.layout.next_tab() { 0 } else { -1 }
+  if bridge_state.layout.next_tab() {
+    0
+  } else {
+    -1
+  }
 }
 
 ///|
 /// Switch to the previous tab. Returns 0 on success.
 pub fn ffi_prev_tab() -> Int {
-  if bridge_state.layout.prev_tab() { 0 } else { -1 }
+  if bridge_state.layout.prev_tab() {
+    0
+  } else {
+    -1
+  }
 }
 
 ///|
@@ -794,14 +804,22 @@ pub fn ffi_close_panel(panel_id_bytes : Bytes) -> Int {
 /// Focus a panel by ID. Returns 0 on success.
 pub fn ffi_focus_panel(panel_id_bytes : Bytes) -> Int {
   let panel_id = bytes_to_int(panel_id_bytes, -1)
-  if bridge_state.layout.focus_panel(panel_id) { 0 } else { -1 }
+  if bridge_state.layout.focus_panel(panel_id) {
+    0
+  } else {
+    -1
+  }
 }
 
 ///|
 /// Focus panel by DFS index (0-based). Returns 0 on success.
 pub fn ffi_focus_panel_by_index(index_bytes : Bytes) -> Int {
   let index = bytes_to_int(index_bytes, -1)
-  if bridge_state.layout.focus_panel_by_index(index) { 0 } else { -1 }
+  if bridge_state.layout.focus_panel_by_index(index) {
+    0
+  } else {
+    -1
+  }
 }
 
 ///|
@@ -816,7 +834,11 @@ pub fn ffi_focus_direction(direction_bytes : Bytes) -> Int {
     3 => Right
     _ => return -1
   }
-  if bridge_state.layout.focus_direction(direction) { 0 } else { -1 }
+  if bridge_state.layout.focus_direction(direction) {
+    0
+  } else {
+    -1
+  }
 }
 
 ///|
@@ -924,14 +946,8 @@ pub fn ffi_resize_layout_px(
   let height_px = bytes_to_int(height_px_bytes, 480)
   ensure_gpu_initialized()
   let (cell_w, cell_h) = get_cell_size_logical_f()
-  let total_cols = Int::max(
-    (Float::from_int(width_px) / cell_w).to_int(),
-    1,
-  )
-  let total_rows = Int::max(
-    (Float::from_int(height_px) / cell_h).to_int(),
-    1,
-  )
+  let total_cols = Int::max((Float::from_int(width_px) / cell_w).to_int(), 1)
+  let total_rows = Int::max((Float::from_int(height_px) / cell_h).to_int(), 1)
   bridge_state.layout.resize_all(total_rows, total_cols)
   panels_to_json()
 }
@@ -952,8 +968,16 @@ fn get_cell_size_logical_f() -> (Float, Float) {
   let logical_w = Float::from_int(cw) / dpi
   let logical_h = Float::from_int(ch) / dpi
   (
-    if logical_w > (0.0 : Float) { logical_w } else { (8.0 : Float) },
-    if logical_h > (0.0 : Float) { logical_h } else { (16.0 : Float) },
+    if logical_w > (0.0 : Float) {
+      logical_w
+    } else {
+      (8.0 : Float)
+    },
+    if logical_h > (0.0 : Float) {
+      logical_h
+    } else {
+      (16.0 : Float)
+    },
   )
 }
 
@@ -1003,9 +1027,7 @@ pub fn ffi_notify_panel_resize(
   // sizes and let notify_panel_resize compute the ratio from them.
   // The ratio is pixel-proportional, and resize_tree will distribute cells.
   let ok = bridge_state.layout.notify_panel_resize(
-    panel_id,
-    first_size_px,
-    total_size_px,
+    panel_id, first_size_px, total_size_px,
   )
   if ok {
     panels_to_json()
@@ -1153,7 +1175,6 @@ pub fn ffi_shutdown() -> Int {
   bridge_state.gpu_backend = None
   bridge_state.renderer = None
   bridge_state.layout.destroy_all()
-  bridge_state.initialized = false
   0
 }
 
@@ -1188,7 +1209,11 @@ fn bytes_to_int(data : Bytes, default_ : Int) -> Int {
     }
   }
   if has_digit {
-    if negative { -result } else { result }
+    if negative {
+      -result
+    } else {
+      result
+    }
   } else {
     default_
   }

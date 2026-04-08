@@ -93,7 +93,11 @@ pub fn Session::resize(self : Session, rows : Int, cols : Int) -> Unit {
 
 ///|
 /// Handle a key input event and return the escape sequence to send to PTY.
-pub fn Session::handle_key(self : Session, key_code : Int, modifiers : Int) -> String {
+pub fn Session::handle_key(
+  self : Session,
+  key_code : Int,
+  modifiers : Int,
+) -> String {
   let modes = self.terminal.get_modes()
   @input.translate_key_input(key_code, modifiers, modes.cursor_keys_application)
 }
@@ -106,7 +110,11 @@ pub fn Session::mark_dead(self : Session) -> Unit {
 
 ///|
 /// Set the PTY master fd and child PID (called after platform PTY start).
-pub fn Session::set_pty(self : Session, master_fd : Int, child_pid : Int) -> Unit {
+pub fn Session::set_pty(
+  self : Session,
+  master_fd : Int,
+  child_pid : Int,
+) -> Unit {
   self.master_fd = master_fd
   self.child_pid = child_pid
 }

@@ -76,9 +76,9 @@ fn serialize_grid_json_diff(grid : Grid) -> String {
         [dr_top, dr_left, dr_bottom, dr_right].to_json()
       }
       let cells_arr : Array[Json] = []
-      for row in dr_top..=dr_bottom {
+      for row in dr_top..<=dr_bottom {
         let line = grid.lines[row]
-        for col in dr_left..=dr_right {
+        for col in dr_left..<=dr_right {
           let cell = line.get(col)
           if cell.char == '\u0000' {
             continue
@@ -274,7 +274,7 @@ test "bench/vt_process_plaintext_4k" (b : @bench.T) {
   // Build 4KB of plain text with line wraps
   let buf = StringBuilder::new()
   for i in 0..<4096 {
-    let c = ((i % 94) + 0x21).unsafe_to_char()
+    let c = (i % 94 + 0x21).unsafe_to_char()
     buf.write_char(c)
     if (i + 1) % 80 == 0 {
       buf.write_string("\r\n")
@@ -297,7 +297,7 @@ test "bench/vt_process_heavy_sgr" (b : @bench.T) {
   let parser = @vt_parser.Parser::new()
   let buf = StringBuilder::new()
   for i in 0..<200 {
-    let color = (i % 8) + 30
+    let color = i % 8 + 30
     buf.write_string("\u001b[")
     buf.write_string(color.to_string())
     buf.write_string(";1mtext")

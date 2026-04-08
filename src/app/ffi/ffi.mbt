@@ -1,11 +1,7 @@
 ///|
 /// Spawn a child process with up to 4 arguments.
 /// Returns child PID or -1 on failure.
-#borrow(path)
-#borrow(arg1)
-#borrow(arg2)
-#borrow(arg3)
-#borrow(arg4)
+#borrow(path, arg1, arg2, arg3, arg4)
 pub extern "C" fn spawn_simple(
   path : Bytes,
   path_len : Int,

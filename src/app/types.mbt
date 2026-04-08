@@ -27,9 +27,6 @@ pub fn AppConfig::default() -> AppConfig {
 ///|
 /// Application error type.
 pub suberror AppError {
-  PtyError(String)
-  PlatformError(String)
-  RenderError(String)
   IpcError(String)
 }
 

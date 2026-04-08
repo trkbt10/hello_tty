@@ -1,6 +1,5 @@
 import {
   "trkbt10/hello_tty/src/terminal" @terminal,
-  "trkbt10/hello_tty/src/vt_parser" @vt_parser,
   "trkbt10/hello_tty/src/font" @font,
   "trkbt10/hello_tty/src/input" @input,
   "trkbt10/hello_tty/src/layout" @layout,
@@ -11,7 +10,5 @@ import {
 }
 
 options(
-  targets: {
-    "exports.mbt": [ "native" ],
-  },
+  targets: { "exports.mbt": [ "native" ] },
 )

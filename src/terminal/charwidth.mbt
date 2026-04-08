@@ -70,9 +70,12 @@ fn is_zero_width(cp : Int) -> Bool {
   // Hangul Jamo combining
   (cp >= 0x1160 && cp <= 0x11FF) ||
   // Zero-width space / non-joiner / joiner
-  cp == 0x200B || cp == 0x200C || cp == 0x200D ||
+  cp == 0x200B ||
+  cp == 0x200C ||
+  cp == 0x200D ||
   // Left-to-right / right-to-left marks
-  cp == 0x200E || cp == 0x200F ||
+  cp == 0x200E ||
+  cp == 0x200F ||
   // Direction formatting
   (cp >= 0x202A && cp <= 0x202E) ||
   (cp >= 0x2060 && cp <= 0x2064) ||

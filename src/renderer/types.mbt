@@ -12,44 +12,22 @@ pub fn RgbaColor::new(r : Byte, g : Byte, b : Byte, a : Byte) -> RgbaColor {
   { r, g, b, a }
 }
 
-pub fn RgbaColor::opaque(r : Byte, g : Byte, b : Byte) -> RgbaColor {
+///|
+pub fn RgbaColor::from_rgb(r : Byte, g : Byte, b : Byte) -> RgbaColor {
   { r, g, b, a: b'\xFF' }
 }
 
 ///|
 pub fn RgbaColor::white() -> RgbaColor {
-  RgbaColor::opaque(b'\xFF', b'\xFF', b'\xFF')
+  RgbaColor::from_rgb(b'\xFF', b'\xFF', b'\xFF')
 }
 
 ///|
 pub fn RgbaColor::black() -> RgbaColor {
-  RgbaColor::opaque(b'\x00', b'\x00', b'\x00')
+  RgbaColor::from_rgb(b'\x00', b'\x00', b'\x00')
 }
 
 // GlyphKey and CachedGlyph are in src/font/types.mbt — used via @font.
-
-///|
-/// A vertex for the GPU renderer — represents one corner of a cell quad.
-pub struct Vertex {
-  /// Position X (normalized device coordinates or pixels).
-  x : Float
-  /// Position Y.
-  y : Float
-  /// Texture coordinate U.
-  u : Float
-  /// Texture coordinate V.
-  v : Float
-  /// Foreground color (packed RGBA).
-  fg_r : Float
-  fg_g : Float
-  fg_b : Float
-  fg_a : Float
-  /// Background color (packed RGBA).
-  bg_r : Float
-  bg_g : Float
-  bg_b : Float
-  bg_a : Float
-} derive(Show)
 
 ///|
 /// Configuration for the renderer.

@@ -7,23 +7,23 @@
 let palette_256 : Array[RgbaColor] = {
   let p : Array[RgbaColor] = Array::new(capacity=256)
   // Standard colors (0-7) — xterm defaults
-  p.push(RgbaColor::opaque(b'\x00', b'\x00', b'\x00')) // Black
-  p.push(RgbaColor::opaque(b'\xAA', b'\x00', b'\x00')) // Red
-  p.push(RgbaColor::opaque(b'\x00', b'\xAA', b'\x00')) // Green
-  p.push(RgbaColor::opaque(b'\xAA', b'\x55', b'\x00')) // Yellow/Brown
-  p.push(RgbaColor::opaque(b'\x00', b'\x00', b'\xAA')) // Blue
-  p.push(RgbaColor::opaque(b'\xAA', b'\x00', b'\xAA')) // Magenta
-  p.push(RgbaColor::opaque(b'\x00', b'\xAA', b'\xAA')) // Cyan
-  p.push(RgbaColor::opaque(b'\xAA', b'\xAA', b'\xAA')) // White
+  p.push(RgbaColor::from_rgb(b'\x00', b'\x00', b'\x00')) // Black
+  p.push(RgbaColor::from_rgb(b'\xAA', b'\x00', b'\x00')) // Red
+  p.push(RgbaColor::from_rgb(b'\x00', b'\xAA', b'\x00')) // Green
+  p.push(RgbaColor::from_rgb(b'\xAA', b'\x55', b'\x00')) // Yellow/Brown
+  p.push(RgbaColor::from_rgb(b'\x00', b'\x00', b'\xAA')) // Blue
+  p.push(RgbaColor::from_rgb(b'\xAA', b'\x00', b'\xAA')) // Magenta
+  p.push(RgbaColor::from_rgb(b'\x00', b'\xAA', b'\xAA')) // Cyan
+  p.push(RgbaColor::from_rgb(b'\xAA', b'\xAA', b'\xAA')) // White
   // Bright colors (8-15)
-  p.push(RgbaColor::opaque(b'\x55', b'\x55', b'\x55')) // Bright Black
-  p.push(RgbaColor::opaque(b'\xFF', b'\x55', b'\x55')) // Bright Red
-  p.push(RgbaColor::opaque(b'\x55', b'\xFF', b'\x55')) // Bright Green
-  p.push(RgbaColor::opaque(b'\xFF', b'\xFF', b'\x55')) // Bright Yellow
-  p.push(RgbaColor::opaque(b'\x55', b'\x55', b'\xFF')) // Bright Blue
-  p.push(RgbaColor::opaque(b'\xFF', b'\x55', b'\xFF')) // Bright Magenta
-  p.push(RgbaColor::opaque(b'\x55', b'\xFF', b'\xFF')) // Bright Cyan
-  p.push(RgbaColor::opaque(b'\xFF', b'\xFF', b'\xFF')) // Bright White
+  p.push(RgbaColor::from_rgb(b'\x55', b'\x55', b'\x55')) // Bright Black
+  p.push(RgbaColor::from_rgb(b'\xFF', b'\x55', b'\x55')) // Bright Red
+  p.push(RgbaColor::from_rgb(b'\x55', b'\xFF', b'\x55')) // Bright Green
+  p.push(RgbaColor::from_rgb(b'\xFF', b'\xFF', b'\x55')) // Bright Yellow
+  p.push(RgbaColor::from_rgb(b'\x55', b'\x55', b'\xFF')) // Bright Blue
+  p.push(RgbaColor::from_rgb(b'\xFF', b'\x55', b'\xFF')) // Bright Magenta
+  p.push(RgbaColor::from_rgb(b'\x55', b'\xFF', b'\xFF')) // Bright Cyan
+  p.push(RgbaColor::from_rgb(b'\xFF', b'\xFF', b'\xFF')) // Bright White
   // 216 color cube (16-231): 6x6x6 with values 0,95,135,175,215,255
   let cube_values : Array[Byte] = [
     b'\x00', b'\x5F', b'\x87', b'\xAF', b'\xD7', b'\xFF',
@@ -32,7 +32,7 @@ let palette_256 : Array[RgbaColor] = {
     for gi in 0..<6 {
       for bi in 0..<6 {
         p.push(
-          RgbaColor::opaque(cube_values[ri], cube_values[gi], cube_values[bi]),
+          RgbaColor::from_rgb(cube_values[ri], cube_values[gi], cube_values[bi]),
         )
       }
     }
@@ -40,7 +40,7 @@ let palette_256 : Array[RgbaColor] = {
   // Grayscale ramp (232-255): 24 shades from 8 to 238
   for i in 0..<24 {
     let v = (8 + i * 10).to_byte()
-    p.push(RgbaColor::opaque(v, v, v))
+    p.push(RgbaColor::from_rgb(v, v, v))
   }
   p
 }
@@ -80,6 +80,6 @@ pub fn Theme::resolve_color(
       } else {
         self.bg
       }
-    Rgb(r, g, b) => RgbaColor::opaque(r, g, b)
+    Rgb(r, g, b) => RgbaColor::from_rgb(r, g, b)
   }
 }

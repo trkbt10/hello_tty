@@ -135,7 +135,11 @@ fn Terminal::print_char(self : Terminal, c : Char) -> Unit {
   // For wide characters, set continuation cell
   if width == 2 && cursor.col + 1 < self.cols {
     grid.set_cell_with_width(
-      cursor.row, cursor.col + 1, '\u0000', cursor.pen, 0,
+      cursor.row,
+      cursor.col + 1,
+      '\u0000',
+      cursor.pen,
+      0,
     )
   }
   // Advance cursor

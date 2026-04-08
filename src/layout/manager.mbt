@@ -63,12 +63,7 @@ pub fn LayoutManager::create_tab(
   self.next_panel_id += 1
   // Delegate session creation to SessionManager
   let (session_id, master_fd) = self.sessions.create_session(rows, cols)
-  let panel = PanelInfo::{
-    panel_id,
-    session_id,
-    rows,
-    cols,
-  }
+  let panel = PanelInfo::{ panel_id, session_id, rows, cols }
   let tab = Tab::{
     id: tab_id,
     layout: Leaf(panel),
@@ -250,7 +245,7 @@ pub fn LayoutManager::split_panel_with_ratio(
     None => return None
   }
   // Check feasibility
-  if !(can_split(panel.rows, panel.cols, direction, ratio, self.divider_size)) {
+  if !can_split(panel.rows, panel.cols, direction, ratio, self.divider_size) {
     return None
   }
   // Compute new dimensions
@@ -270,8 +265,7 @@ pub fn LayoutManager::split_panel_with_ratio(
   }
   // Create new session
   let (new_session_id, master_fd) = self.sessions.create_session(
-    second_rows,
-    second_cols,
+    second_rows, second_cols,
   )
   let new_panel_id = self.next_panel_id
   self.next_panel_id += 1
@@ -289,12 +283,7 @@ pub fn LayoutManager::split_panel_with_ratio(
     None => ()
   }
   // Build the replacement subtree
-  let replacement = Split(
-    direction,
-    Leaf(panel),
-    Leaf(new_panel),
-    ratio,
-  )
+  let replacement = Split(direction, Leaf(panel), Leaf(new_panel), ratio)
   // Replace in the tree
   match replace_leaf(tab.layout, panel_id, replacement) {
     Some(new_root) => tab.layout = new_root
@@ -303,15 +292,13 @@ pub fn LayoutManager::split_panel_with_ratio(
   // Focus the new panel
   tab.focused_panel_id = new_panel_id
   self.sessions.switch_to(new_session_id) |> ignore
-  Some(
-    SplitResult::{
-      new_panel_id,
-      new_session_id,
-      master_fd,
-      existing_rows: first_rows,
-      existing_cols: first_cols,
-    },
-  )
+  Some(SplitResult::{
+    new_panel_id,
+    new_session_id,
+    master_fd,
+    existing_rows: first_rows,
+    existing_cols: first_cols,
+  })
 }
 
 ///|
@@ -320,10 +307,7 @@ pub fn LayoutManager::split_panel_with_ratio(
 /// If this is the last panel in the tab, the tab is closed.
 /// Returns the session_id of the focused panel after closing,
 /// or -1 if the tab was closed.
-pub fn LayoutManager::close_panel(
-  self : LayoutManager,
-  panel_id : Int,
-) -> Int {
+pub fn LayoutManager::close_panel(self : LayoutManager, panel_id : Int) -> Int {
   let tab = match self.active_tab() {
     Some(t) => t
     None => return -1
@@ -614,18 +598,16 @@ fn set_ratio_for_panel(
       }
       if is_direct_child {
         Some(Split(dir, first, second, new_ratio))
-      } else {
         // Recurse into the subtree containing the target
-        if in_first {
-          match set_ratio_for_panel(first, panel_id, new_ratio) {
-            Some(new_first) => Some(Split(dir, new_first, second, ratio))
-            None => None
-          }
-        } else {
-          match set_ratio_for_panel(second, panel_id, new_ratio) {
-            Some(new_second) => Some(Split(dir, first, new_second, ratio))
-            None => None
-          }
+      } else if in_first {
+        match set_ratio_for_panel(first, panel_id, new_ratio) {
+          Some(new_first) => Some(Split(dir, new_first, second, ratio))
+          None => None
+        }
+      } else {
+        match set_ratio_for_panel(second, panel_id, new_ratio) {
+          Some(new_second) => Some(Split(dir, first, new_second, ratio))
+          None => None
         }
       }
     }
@@ -640,24 +622,4 @@ pub fn LayoutManager::destroy_all(self : LayoutManager) -> Unit {
   self.tabs.clear()
   self.active_tab_id = -1
   self.sessions.destroy_all()
-}
-
-// ========== Internal Helpers ==========
-
-///|
-/// Compute the total rows and cols of the root by summing up leaf dimensions.
-/// This is an approximation used after tree mutations — the caller should
-/// ideally pass the known total dimensions.
-fn root_dimensions(node : LayoutNode) -> (Int, Int) {
-  match node {
-    Leaf(info) => (info.rows, info.cols)
-    Split(dir, first, second, _) => {
-      let (fr, fc) = root_dimensions(first)
-      let (sr, sc) = root_dimensions(second)
-      match dir {
-        Horizontal => (fr + sr + 1, Int::max(fc, sc))
-        Vertical => (Int::max(fr, sr), fc + sc + 1)
-      }
-    }
-  }
 }

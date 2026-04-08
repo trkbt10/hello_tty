@@ -16,7 +16,9 @@ pub struct FontEngine {
 }
 
 ///|
-pub fn FontEngine::new(config~ : FontConfig = FontConfig::default()) -> FontEngine {
+pub fn FontEngine::new(
+  config? : FontConfig = FontConfig::default(),
+) -> FontEngine {
   {
     config,
     atlas: TextureAtlas::new(config.atlas_size, config.atlas_size),
@@ -29,9 +31,13 @@ pub fn FontEngine::new(config~ : FontConfig = FontConfig::default()) -> FontEngi
 ///|
 /// Initialize the font engine via platform FFI.
 /// Reads font metrics and prepares the atlas.
-pub fn FontEngine::init(self : FontEngine) -> Unit!FontError {
+pub fn FontEngine::init(self : FontEngine) -> Unit raise FontError {
   let font_name = @utf8.encode(self.config.font_name)
-  let font_ret = @ffi.font_init(font_name, font_name.length(), self.config.font_size)
+  let font_ret = @ffi.font_init(
+    font_name,
+    font_name.length(),
+    self.config.font_size,
+  )
   if font_ret < 0 {
     raise FontInitFailed("Font engine initialization failed")
   }
@@ -85,7 +91,10 @@ pub fn FontEngine::ensure_glyph(
   }
   // Rasterize via FFI
   let metrics_buf : FixedArray[Int] = FixedArray::make(5, 0)
-  let bitmap_buf : FixedArray[Byte] = FixedArray::make(self.max_glyph_buf, b'\x00')
+  let bitmap_buf : FixedArray[Byte] = FixedArray::make(
+    self.max_glyph_buf,
+    b'\x00',
+  )
   let bold_flag = if key.bold { 1 } else { 0 }
   let italic_flag = if key.italic { 1 } else { 0 }
   let bitmap_size = @ffi.font_rasterize(

@@ -410,10 +410,18 @@ pub fn Grid::mark_dirty(self : Grid, row : Int, col : Int) -> Unit {
     self.dirty_left = col
     self.dirty_right = col
   } else {
-    if row < self.dirty_top { self.dirty_top = row }
-    if row > self.dirty_bottom { self.dirty_bottom = row }
-    if col < self.dirty_left { self.dirty_left = col }
-    if col > self.dirty_right { self.dirty_right = col }
+    if row < self.dirty_top {
+      self.dirty_top = row
+    }
+    if row > self.dirty_bottom {
+      self.dirty_bottom = row
+    }
+    if col < self.dirty_left {
+      self.dirty_left = col
+    }
+    if col > self.dirty_right {
+      self.dirty_right = col
+    }
   }
 }
 

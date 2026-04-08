@@ -134,7 +134,7 @@ pub fn SessionManager::list_sessions(
 
 ///|
 pub fn SessionManager::count(self : SessionManager) -> Int {
-  self.sessions.size()
+  self.sessions.length()
 }
 
 ///|

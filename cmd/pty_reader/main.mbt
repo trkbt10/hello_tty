@@ -11,7 +11,6 @@
 /// trkbt10/subprocess IPC sockets (length-prefixed framing).
 ///
 /// Usage: pty_reader <socket_path> [shell] [rows] [cols]
-
 fn main {
   let args = @env.args()
   // args[0] = program name, args[1] = socket_path, etc.
@@ -21,66 +20,40 @@ fn main {
   }
   let socket_path = args[1]
   let shell = if args.length() >= 3 { args[2] } else { "/bin/zsh" }
-  let rows = if args.length() >= 4 {
-    parse_int_or(args[3], 24)
-  } else {
-    24
-  }
-  let cols = if args.length() >= 5 {
-    parse_int_or(args[4], 80)
-  } else {
-    80
-  }
+  let rows = if args.length() >= 4 { parse_int_or(args[3], 24) } else { 24 }
+  let cols = if args.length() >= 5 { parse_int_or(args[4], 80) } else { 80 }
   // Connect to the main process via IPC socket
-  let conn = try {
-    @socket.Connection::connect(socket_path)
-  } catch {
-    err => {
+  let conn = @socket.Connection::connect(socket_path) catch {
+    _ => {
       println("pty_reader: failed to connect to " + socket_path)
       return
     }
   }
   // Fork the child shell via PTY
-  let child = try {
-    @pty.fork_with_shell(shell~, rows~, cols~)
-  } catch {
-    err => {
+  let child = @pty.fork_with_shell(shell~, rows~, cols~) catch {
+    _ => {
       println("pty_reader: fork_with_shell failed")
       conn.close()
       return
     }
   }
   // Set PTY master to non-blocking for polling
-  try {
-    child.set_nonblocking()
-  } catch {
+  child.set_nonblocking() catch {
     _ => ()
   }
   // Main loop: multiplex PTY reads and IPC receives
   let mut running = true
   while running {
     // Check for PTY output (non-blocking poll with short timeout)
-    let pty_readable = try {
-      child.poll_read(timeout_ms=10)
-    } catch {
-      _ => false
-    }
+    let pty_readable = child.poll_read(timeout_ms=10) catch { _ => false }
     if pty_readable {
-      let data = try {
-        child.read()
-      } catch {
-        _ => Bytes::new(0)
-      }
+      let data = child.read() catch { _ => Bytes::new(0) }
       if data.length() > 0 {
         // Convert bytes to string and send via IPC
         let s = bytes_to_string(data)
         let msg = @app.IpcMessage::PtyOutput(s)
-        try {
-          conn.send(msg.serialize())
-        } catch {
-          _ => {
-            running = false
-          }
+        conn.send(msg.serialize()) catch {
+          _ => running = false
         }
       } else if data.length() == 0 {
         // EOF from PTY — child process exited
@@ -88,46 +61,27 @@ fn main {
       }
     }
     // Check for IPC messages from main process (non-blocking)
-    let ipc_readable = try {
-      conn.poll(timeout_ms=0)
-    } catch {
-      _ => false
-    }
+    let ipc_readable = conn.poll(timeout_ms=0) catch { _ => false }
     if ipc_readable {
-      let msg_str = try {
-        conn.recv()
-      } catch {
-        _ => None
-      }
+      let msg_str = conn.recv() catch { _ => None }
       match msg_str {
-        None => {
+        None =>
           // Main process disconnected
           running = false
-        }
         Some(s) => {
           let msg = @app.IpcMessage::deserialize(s)
           match msg {
-            Some(KeyInput(input)) => {
+            Some(KeyInput(input)) =>
               // Write keyboard input to PTY
-              try {
-                child.write_string(input)
-              } catch {
-                _ => {
-                  running = false
-                }
+              child.write_string(input) catch {
+                _ => running = false
               }
-            }
-            Some(Resize(rows~, cols~)) => {
+            Some(Resize(rows~, cols~)) =>
               // Resize PTY
-              try {
-                child.resize(rows, cols)
-              } catch {
+              child.resize(rows, cols) catch {
                 _ => ()
               }
-            }
-            Some(Shutdown) => {
-              running = false
-            }
+            Some(Shutdown) => running = false
             _ => ()
           }
         }
@@ -136,9 +90,7 @@ fn main {
   }
   // Cleanup
   child.close()
-  try {
-    conn.send(@app.IpcMessage::Shutdown.serialize())
-  } catch {
+  conn.send(@app.IpcMessage::Shutdown.serialize()) catch {
     _ => ()
   }
   conn.close()

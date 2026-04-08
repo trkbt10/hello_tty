@@ -1,8 +1,8 @@
 options(
   targets: {
-    "types.mbt": [ "native" ],
-    "keymap.mbt": [ "native" ],
     "input.mbt": [ "native" ],
     "input_test.mbt": [ "native" ],
+    "keymap.mbt": [ "native" ],
+    "types.mbt": [ "native" ],
   },
 )

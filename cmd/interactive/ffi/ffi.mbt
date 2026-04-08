@@ -26,8 +26,7 @@ pub extern "C" fn debug_log(data : Bytes, len : Int) -> Int = "hello_tty_debug_l
 /// shell: null-terminated shell path.
 /// result[0] = master_fd, result[1] = child_pid.
 /// Returns 0 on success.
-#borrow(shell)
-#borrow(result)
+#borrow(shell, result)
 pub extern "C" fn pty_session_start(
   shell : Bytes,
   rows : Int,

@@ -112,24 +112,4 @@ pub(all) enum FocusDirection {
 pub(all) enum PanelBackend {
   /// Each panel owns an independent PTY with its own shell process.
   Native
-  /// Panels are managed by an external multiplexer (tmux -CC or screen).
-  /// The tab has a single PTY connection to the multiplexer.
-  Multiplexer(MultiplexerConfig)
 } derive(Show)
-
-///|
-/// Configuration for multiplexer-backed panels.
-pub struct MultiplexerConfig {
-  /// Which multiplexer to use.
-  kind : MultiplexerKind
-  /// Path to the multiplexer binary (e.g. "/usr/bin/tmux").
-  binary_path : String
-  /// Whether to use control mode (tmux -CC) for structured output.
-  control_mode : Bool
-} derive(Show)
-
-///|
-pub(all) enum MultiplexerKind {
-  Tmux
-  Screen
-} derive(Show, Eq)

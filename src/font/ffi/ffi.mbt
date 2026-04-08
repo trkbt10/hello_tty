@@ -11,8 +11,7 @@ pub extern "C" fn font_init(
 ) -> Int = "hello_tty_font_init"
 
 ///|
-#borrow(metrics_out)
-#borrow(bitmap_out)
+#borrow(metrics_out, bitmap_out)
 pub extern "C" fn font_rasterize(
   codepoint : Int,
   bold : Int,
@@ -24,9 +23,7 @@ pub extern "C" fn font_rasterize(
 
 ///|
 #borrow(metrics_out)
-pub extern "C" fn font_get_metrics(
-  metrics_out : FixedArray[Int],
-) -> Int = "hello_tty_font_get_metrics"
+pub extern "C" fn font_get_metrics(metrics_out : FixedArray[Int]) -> Int = "hello_tty_font_get_metrics"
 
 ///|
 pub extern "C" fn font_shutdown() = "hello_tty_font_shutdown"

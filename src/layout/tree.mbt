@@ -50,7 +50,11 @@ pub fn dfs_index_of(node : LayoutNode, panel_id : Int) -> Int {
 }
 
 ///|
-fn dfs_index_search(node : LayoutNode, panel_id : Int, counter : Ref[Int]) -> Int {
+fn dfs_index_search(
+  node : LayoutNode,
+  panel_id : Int,
+  counter : Ref[Int],
+) -> Int {
   match node {
     Leaf(info) =>
       if info.panel_id == panel_id {
@@ -129,12 +133,10 @@ pub fn replace_leaf(
       }
     Split(dir, first, second, ratio) =>
       match replace_leaf(first, panel_id, replacement) {
-        Some(new_first) =>
-          Some(Split(dir, new_first, second, ratio))
+        Some(new_first) => Some(Split(dir, new_first, second, ratio))
         None =>
           match replace_leaf(second, panel_id, replacement) {
-            Some(new_second) =>
-              Some(Split(dir, first, new_second, ratio))
+            Some(new_second) => Some(Split(dir, first, new_second, ratio))
             None => None
           }
       }
@@ -170,7 +172,9 @@ pub fn remove_panel(node : LayoutNode, panel_id : Int) -> LayoutNode? {
                 None =>
                   match remove_panel(second, panel_id) {
                     Some(new_second) =>
-                      Some(Split(node.direction(), first, new_second, node.ratio()))
+                      Some(
+                        Split(node.direction(), first, new_second, node.ratio()),
+                      )
                     None => None
                   }
               }
@@ -224,14 +228,20 @@ pub fn resize_tree(
       match dir {
         Horizontal => {
           let available = Int::max(rows - divider_size, 2)
-          let first_rows = Int::max((Float::from_int(available) * ratio).to_int(), 1)
+          let first_rows = Int::max(
+            (Float::from_int(available) * ratio).to_int(),
+            1,
+          )
           let second_rows = Int::max(available - first_rows, 1)
           resize_tree(first, first_rows, cols, divider_size)
           resize_tree(second, second_rows, cols, divider_size)
         }
         Vertical => {
           let available = Int::max(cols - divider_size, 2)
-          let first_cols = Int::max((Float::from_int(available) * ratio).to_int(), 1)
+          let first_cols = Int::max(
+            (Float::from_int(available) * ratio).to_int(),
+            1,
+          )
           let second_cols = Int::max(available - first_cols, 1)
           resize_tree(first, rows, first_cols, divider_size)
           resize_tree(second, rows, second_cols, divider_size)

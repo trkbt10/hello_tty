@@ -8,8 +8,5 @@ import {
 }
 
 options(
-  targets: {
-    "types.mbt": [ "native" ],
-    "manager.mbt": [ "native" ],
-  },
+  targets: { "manager.mbt": [ "native" ], "types.mbt": [ "native" ] },
 )

@@ -4,8 +4,8 @@ import {
 
 options(
   targets: {
-    "types.mbt": [ "native" ],
-    "palette.mbt": [ "native" ],
     "builtin.mbt": [ "native" ],
+    "palette.mbt": [ "native" ],
+    "types.mbt": [ "native" ],
   },
 )

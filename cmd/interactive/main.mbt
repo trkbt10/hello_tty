@@ -6,13 +6,12 @@
 /// VTパーサー + ターミナルステート更新のみ行う。
 ///
 /// Ctrl+D or exit で終了。
-
 fn main {
   // raw mode
   let old_termios = @ffi.enable_raw_mode()
   let raw_mode = old_termios >= 0
   // PTYセッション開始（C側でfork+exec）
-  let shell = @utf8.encode("/bin/sh\x00") // null terminated
+  let shell = @utf8.encode("/bin/sh\u0000") // null terminated
   let result : FixedArray[Int] = FixedArray::make(2, 0)
   let ret = @ffi.pty_session_start(shell, 24, 80, result)
   if ret < 0 {
@@ -24,7 +23,12 @@ fn main {
   }
   let master_fd = result[0]
   let child_pid = result[1]
-  debug("session started: master_fd=" + master_fd.to_string() + " pid=" + child_pid.to_string())
+  debug(
+    "session started: master_fd=" +
+    master_fd.to_string() +
+    " pid=" +
+    child_pid.to_string(),
+  )
   // VTパーサーとターミナル
   let parser = @vt_parser.Parser::new()
   let terminal = @terminal.Terminal::new(rows=24, cols=80)
