@@ -13,6 +13,8 @@ class TerminalGPUView: TerminalBaseView {
     private var metalLayer: CAMetalLayer?
     private var gpuInitialized = false
     private var displayLink: CVDisplayLink?
+    /// The GPU surface_id owned by this view. -1 if not created.
+    private var surfaceId: Int32 = -1
 
     override var wantsUpdateLayer: Bool { true }
 
@@ -43,36 +45,94 @@ class TerminalGPUView: TerminalBaseView {
         super.viewDidMoveToWindow()
         if let window = self.window {
             metalLayer?.contentsScale = window.backingScaleFactor
+            initGPUIfNeeded()
+            startDisplayLink()
+        } else {
+            // View temporarily removed from window (tab switch, layout rebuild).
+            // Stop rendering but do NOT destroy the surface — SwiftUI may
+            // re-add this view shortly. Surface destruction is only done
+            // in removeFromSuperview (permanent removal).
+            stopDisplayLink()
         }
-        initGPUIfNeeded()
-        startDisplayLink()
     }
 
     override func removeFromSuperview() {
         stopDisplayLink()
+        destroySurface()
         super.removeFromSuperview()
     }
 
-    // MARK: - GPU Init
+    // MARK: - GPU Init (per-panel surface)
 
+    /// Destroy this view's GPU surface.
+    /// Uses surfaceId (not sessionId) to avoid destroying a surface
+    /// that was recreated by a newer view for the same session.
+    private func destroySurface() {
+        if surfaceId >= 0 {
+            // Directly destroy the C-level surface by ID
+            MoonBitBridge.shared.gpuSurfaceDestroyById(surfaceId: surfaceId)
+            // Only remove from surface_map if our surfaceId still matches
+            if let state = terminalState {
+                state.bridge.gpuSurfaceUnregisterIfMatches(
+                    sessionId: state.sessionId, expectedSurfaceId: surfaceId)
+            }
+            surfaceId = -1
+        }
+        gpuInitialized = false
+    }
+
+    /// Create or recreate the GPU surface for this view's CAMetalLayer.
+    /// Called on first appearance, when the view is re-added to the window,
+    /// and when the terminalState changes (panel reassignment).
     private func initGPUIfNeeded() {
-        guard !gpuInitialized, let layer = metalLayer, let state = terminalState else { return }
+        guard let layer = metalLayer, let state = terminalState else { return }
         let scale = metalLayer?.contentsScale ?? 2.0
         let w = Int(bounds.width * scale)
         let h = Int(bounds.height * scale)
         guard w > 0 && h > 0 else { return }
 
+        // If already initialized for this session, just ensure render is triggered
+        if gpuInitialized && surfaceId >= 0 {
+            needsRender = true
+            return
+        }
+
+        // Destroy any stale surface from a previous incarnation
+        destroySurface()
+
         let layerPtr = Unmanaged.passUnretained(layer).toOpaque()
-        guard state.bridge.gpuInitDirect(metalLayer: layerPtr, width: w, height: h) else {
-            NSLog("hello_tty: GPU direct init failed")
-            return
+
+        if state.sessionId >= 0 {
+            // gpuSurfaceCreate does two things:
+            //   1. Creates wgpu surface via direct C FFI (uint64_t handle)
+            //   2. Registers session→surface mapping in MoonBit bridge
+            //      (also ensures renderer/font/atlas are initialized)
+            let sid = state.bridge.gpuSurfaceCreate(
+                sessionId: state.sessionId,
+                metalLayer: layerPtr,
+                width: w, height: h)
+            if sid < 0 {
+                NSLog("hello_tty: GPU surface creation failed for session %d", state.sessionId)
+                return
+            }
+            surfaceId = sid
+            gpuInitialized = true
+            needsRender = true
+            NSLog("hello_tty: GPU surface %d created for session %d (%dx%d)",
+                  sid, state.sessionId, w, h)
+        } else {
+            guard state.bridge.gpuInitDirect(metalLayer: layerPtr, width: w, height: h) else {
+                NSLog("hello_tty: GPU direct init failed")
+                return
+            }
+            guard state.bridge.gpuInitBridge(surfaceHandle: 0, width: w, height: h) else {
+                NSLog("hello_tty: GPU bridge init failed")
+                return
+            }
+            gpuInitialized = true
+            needsRender = true
+            NSLog("hello_tty: GPU rendering initialized (legacy) (%dx%d)", w, h)
         }
-        guard state.bridge.gpuInitBridge(surfaceHandle: 0, width: w, height: h) else {
-            NSLog("hello_tty: GPU bridge init failed")
-            return
-        }
-        gpuInitialized = true
-        NSLog("hello_tty: GPU rendering initialized (%dx%d)", w, h)
     }
 
     // MARK: - Display Link
@@ -95,7 +155,11 @@ class TerminalGPUView: TerminalBaseView {
         }
     }
 
-    // MARK: - Resize (GPU-specific + base grid recalc)
+    // MARK: - Resize (GPU surface pixel resize only)
+    //
+    // Layout resize (grid rows/cols) is driven by PanelSplitView's container
+    // GeometryReader → TabManager.applyLayoutResize(). This view only handles
+    // the GPU surface's pixel dimensions (drawableSize + wgpu surface config).
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
@@ -105,7 +169,12 @@ class TerminalGPUView: TerminalBaseView {
         let ph = Int(bounds.height * scale)
         guard pw > 0 && ph > 0 else { return }
         metalLayer?.drawableSize = CGSize(width: pw, height: ph)
-        state.bridge.gpuResizeBridge(width: pw, height: ph)
+        if state.sessionId >= 0 {
+            state.bridge.gpuSurfaceResize(sessionId: state.sessionId, width: pw, height: ph)
+        } else {
+            state.bridge.gpuResizeBridge(width: pw, height: ph)
+        }
+        needsRender = true
     }
 
     // MARK: - Rendering
@@ -115,14 +184,40 @@ class TerminalGPUView: TerminalBaseView {
 
     private func renderFrame() {
         guard gpuInitialized, let state = terminalState else { return }
-        // Only re-render when terminal state has changed
         guard needsRender else { return }
         needsRender = false
-        _ = state.bridge.renderFrame()
+        let result: Bool
+        if state.sessionId >= 0 {
+            result = state.bridge.renderFrameFor(sessionId: state.sessionId)
+        } else {
+            result = state.bridge.renderFrame()
+        }
+        if !result {
+            NSLog("hello_tty: renderFrame FAILED for session %d, surfaceId %d", state.sessionId, surfaceId)
+        }
         // Draw IME composition overlay if needed (CoreGraphics on top of Metal)
         DispatchQueue.main.async { [weak self] in
             self?.updateIMEOverlay()
         }
+    }
+
+    /// Rebind this view's existing GPU surface to a new session.
+    /// Called when TerminalView.updateNSView detects that the TerminalState
+    /// changed (e.g. tab switch, panel reassignment).
+    ///
+    /// Instead of destroying and recreating the wgpu surface (which causes
+    /// a black flash), we keep the same CAMetalLayer surface and just update
+    /// MoonBit's session→surface mapping. The next renderFrame will draw the
+    /// new session's content into the existing surface.
+    func rebindSurface() {
+        guard let state = terminalState, surfaceId >= 0 else {
+            // No existing surface — need full init
+            initGPUIfNeeded()
+            return
+        }
+        // Re-register: point the new session at our existing surface
+        state.bridge.gpuRegisterSurface(sessionId: state.sessionId, surfaceId: surfaceId)
+        needsRender = true
     }
 
     /// Mark that the terminal state changed and needs re-rendering.

@@ -13,11 +13,17 @@ struct HelloTTYApp: App {
         .windowToolbarStyle(.unified(showsTitle: false))
         .defaultSize(width: 720, height: 480)
         .commands {
-            CommandGroup(after: .newItem) {
+            // Replace default Cmd+N (new window) — we don't support multi-window yet
+            CommandGroup(replacing: .newItem) {
                 Button("New Tab") {
                     appDelegate.tabManager.newTab()
                 }
                 .keyboardShortcut("t", modifiers: .command)
+
+                Button("Close Panel") {
+                    appDelegate.tabManager.closeFocusedPanel()
+                }
+                .keyboardShortcut("w", modifiers: .command)
             }
         }
     }
@@ -37,9 +43,8 @@ struct MainWindowView: View {
             )
             .ignoresSafeArea()
 
-            if let tab = tabManager.selectedTab {
-                TerminalContainerView(state: tab.state)
-                    .id(tab.id)
+            if tabManager.selectedTab != nil {
+                PanelSplitView(tabManager: tabManager)
             } else {
                 PlaceholderView()
             }
@@ -169,7 +174,7 @@ struct GlassTabCapsule: View {
     }
 }
 
-// MARK: - Terminal Container
+// MARK: - Terminal Container (legacy, kept for single-panel fallback)
 
 struct TerminalContainerView: View {
     @ObservedObject var state: TerminalState
@@ -179,6 +184,21 @@ struct TerminalContainerView: View {
             .onChange(of: state.title) { newTitle in
                 if let window = NSApp.mainWindow {
                     window.title = newTitle.isEmpty ? "hello_tty" : newTitle
+                }
+            }
+    }
+}
+
+// MARK: - Window Title Sync (for panel-based layout)
+
+struct WindowTitleModifier: ViewModifier {
+    @ObservedObject var tabManager: TabManager
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: tabManager.selectedTab?.title) { newTitle in
+                if let window = NSApp.mainWindow {
+                    window.title = (newTitle ?? "").isEmpty ? "hello_tty" : (newTitle ?? "hello_tty")
                 }
             }
     }

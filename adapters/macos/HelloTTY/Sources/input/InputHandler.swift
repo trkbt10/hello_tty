@@ -17,6 +17,8 @@ import AppKit
 ///   - Rendering
 class InputHandler {
     weak var state: TerminalState?
+    /// TabManager for panel/tab operations. Set by the view hierarchy.
+    weak var tabManager: TabManager?
 
     // Stash the current event for doCommand(by:) which only receives a selector
     var currentEvent: NSEvent?
@@ -81,6 +83,48 @@ class InputHandler {
         case .forwardToIme:
             clearSelection()
             return false // caller passes to inputContext
+
+        // ---- Split operations ----
+        case .splitRight:
+            tabManager?.splitFocusedPanel(direction: 0) // vertical
+            return true
+
+        case .splitDown:
+            tabManager?.splitFocusedPanel(direction: 1) // horizontal
+            return true
+
+        case .nextSplit:
+            tabManager?.focusNextSplit()
+            return true
+
+        case .prevSplit:
+            tabManager?.focusPrevSplit()
+            return true
+
+        case .focusDirection(let dir):
+            tabManager?.focusDirection(dir)
+            return true
+
+        // ---- Tab operations ----
+        case .newTab:
+            tabManager?.newTab()
+            return true
+
+        case .closePanel:
+            tabManager?.closeFocusedPanel()
+            return true
+
+        case .nextTab:
+            tabManager?.nextTab()
+            return true
+
+        case .prevTab:
+            tabManager?.prevTab()
+            return true
+
+        case .gotoTab(let index):
+            tabManager?.gotoTab(index)
+            return true
         }
     }
 

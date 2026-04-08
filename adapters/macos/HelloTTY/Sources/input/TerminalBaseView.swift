@@ -12,8 +12,17 @@ import AppKit
 class TerminalBaseView: NSView, NSTextInputClient {
     var terminalState: TerminalState? {
         didSet {
-            if let s = terminalState { input = InputHandler(state: s) }
+            if let s = terminalState {
+                input = InputHandler(state: s)
+                input?.tabManager = tabManager
+            }
         }
+    }
+
+    /// TabManager reference for panel/tab keybinding operations.
+    /// Set by the view hierarchy (TerminalView's NSViewRepresentable coordinator).
+    weak var tabManager: TabManager? {
+        didSet { input?.tabManager = tabManager }
     }
 
     private(set) var input: InputHandler?
@@ -21,18 +30,25 @@ class TerminalBaseView: NSView, NSTextInputClient {
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { true }
 
-    // MARK: - Resize (subclasses must call recalculateGridSize)
+    // MARK: - Resize
+    //
+    // MoonBit LayoutManager is the SoT for all panel grid dimensions.
+    // Swift does NOT compute grid sizes — it sends the total available
+    // pixel dimensions to MoonBit, which distributes space via the layout
+    // tree and resizes each session's terminal grid.
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        recalculateGridSize()
-    }
-
-    func recalculateGridSize() {
-        guard let state = terminalState else { return }
-        let newCols = max(1, Int(bounds.width / state.cellWidth))
-        let newRows = max(1, Int(bounds.height / state.cellHeight))
-        state.resize(rows: newRows, cols: newCols)
+        // In multi-panel mode, layout resize is driven by the container
+        // (PanelSplitView) which knows the total available space.
+        // Individual panel views must NOT call resizeLayout with their own
+        // partial bounds — that would shrink all panels to one panel's size.
+        //
+        // In legacy single-panel mode (no TabManager), this view IS the
+        // only view, so its bounds ARE the total — safe to resize directly.
+        if tabManager == nil, let state = terminalState {
+            state.resizePx(widthPx: Int(bounds.width), heightPx: Int(bounds.height))
+        }
     }
 
     // MARK: - Keyboard
@@ -98,19 +114,19 @@ class TerminalBaseView: NSView, NSTextInputClient {
     override func mouseDown(with event: NSEvent) {
         guard let input = input, let state = terminalState else { return }
         let p = convert(event.locationInWindow, from: nil)
-        let row = max(0, Int((bounds.height - p.y) / state.cellHeight))
-        let col = max(0, Int(p.x / state.cellWidth))
-        input.selectionAnchor = (row, col)
-        input.selectionEnd = (row, col)
+        let cell = state.bridge.pixelToGrid(
+            xPx: Int(p.x), yPx: Int(p.y), viewHeightPx: Int(bounds.height))
+        input.selectionAnchor = (cell.row, cell.col)
+        input.selectionEnd = (cell.row, cell.col)
         needsDisplay = true
     }
 
     override func mouseDragged(with event: NSEvent) {
         guard let input = input, let state = terminalState else { return }
         let p = convert(event.locationInWindow, from: nil)
-        let row = max(0, Int((bounds.height - p.y) / state.cellHeight))
-        let col = max(0, Int(p.x / state.cellWidth))
-        input.selectionEnd = (row, col)
+        let cell = state.bridge.pixelToGrid(
+            xPx: Int(p.x), yPx: Int(p.y), viewHeightPx: Int(bounds.height))
+        input.selectionEnd = (cell.row, cell.col)
         needsDisplay = true
     }
 

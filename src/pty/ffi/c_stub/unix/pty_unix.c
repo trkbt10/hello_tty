@@ -61,9 +61,15 @@ int hello_tty_pty_forkpty(int *master_fd) {
 }
 
 // Fork a child PTY and exec a shell using posix_spawn.
-// Uses openpty + posix_spawn instead of forkpty to avoid
+// Uses posix_openpt + posix_spawn instead of forkpty to avoid
 // MoonBit GC corruption in the child process (MoonBit's GC
 // registers pthread_atfork handlers that crash after fork).
+//
+// The child process opens the PTY slave by path (via ptsname) inside
+// the posix_spawn file actions. Because POSIX_SPAWN_SETSID creates
+// a new session, the first open of a PTY slave automatically makes it
+// the controlling terminal — this is required for ^C (SIGINT),
+// ^Z (SIGTSTP), ^\ (SIGQUIT) etc. to work correctly.
 //
 // shell: UTF-8 path bytes (not necessarily null-terminated).
 // result_buf[0] = master_fd.
@@ -78,29 +84,58 @@ int hello_tty_pty_fork_exec(const unsigned char *shell, int shell_len,
   memcpy(shell_path, shell, (size_t)slen);
   shell_path[slen] = '\0';
 
-  // Open PTY pair
-  int master_fd, slave_fd;
-  if (openpty(&master_fd, &slave_fd, NULL, NULL, NULL) < 0)
+  // Open PTY master via posix_openpt to get a named slave path.
+  // This is critical: we need ptsname() so the child can open() the
+  // slave by path inside posix_spawn. When a session leader opens a
+  // PTY slave, the kernel automatically sets it as the controlling
+  // terminal (unlike dup2 of an already-open fd, which does NOT).
+  int master_fd = posix_openpt(O_RDWR | O_NOCTTY);
+  if (master_fd < 0)
     return -1;
 
-  // Set window size on slave
+  if (grantpt(master_fd) < 0 || unlockpt(master_fd) < 0) {
+    close(master_fd);
+    return -1;
+  }
+
+  // Get the slave device path (e.g., /dev/ttys003)
+  const char *slave_name = ptsname(master_fd);
+  if (!slave_name) {
+    close(master_fd);
+    return -1;
+  }
+
+  // Open the slave briefly in the parent to set window size,
+  // then close it — the child will open its own copy.
+  int slave_fd = open(slave_name, O_RDWR);
+  if (slave_fd < 0) {
+    close(master_fd);
+    return -1;
+  }
+
   struct winsize ws;
   memset(&ws, 0, sizeof(ws));
   ws.ws_row = (unsigned short)rows;
   ws.ws_col = (unsigned short)cols;
   ioctl(slave_fd, TIOCSWINSZ, &ws);
+  close(slave_fd);
 
-  // TERM env var is set by MoonBit before calling this.
-
-  // Configure posix_spawn file actions
+  // Configure posix_spawn file actions.
+  // The child opens the slave by path (not dup2 of parent's fd).
+  // This open() in a new session (POSIX_SPAWN_SETSID) causes the
+  // kernel to assign the PTY as the controlling terminal.
   posix_spawn_file_actions_t file_actions;
   posix_spawn_file_actions_init(&file_actions);
-  posix_spawn_file_actions_adddup2(&file_actions, slave_fd, STDIN_FILENO);
-  posix_spawn_file_actions_adddup2(&file_actions, slave_fd, STDOUT_FILENO);
-  posix_spawn_file_actions_adddup2(&file_actions, slave_fd, STDERR_FILENO);
-  if (slave_fd > STDERR_FILENO)
-    posix_spawn_file_actions_addclose(&file_actions, slave_fd);
+
+  // Close inherited master fd in child
   posix_spawn_file_actions_addclose(&file_actions, master_fd);
+
+  // Open slave as stdin (fd 0) — this triggers TIOCSCTTY automatically
+  posix_spawn_file_actions_addopen(&file_actions, STDIN_FILENO,
+    slave_name, O_RDWR, 0);
+  // dup stdin to stdout and stderr
+  posix_spawn_file_actions_adddup2(&file_actions, STDIN_FILENO, STDOUT_FILENO);
+  posix_spawn_file_actions_adddup2(&file_actions, STDIN_FILENO, STDERR_FILENO);
 
   // Configure spawn attributes
   posix_spawnattr_t attr;
@@ -122,7 +157,6 @@ int hello_tty_pty_fork_exec(const unsigned char *shell, int shell_len,
 
   posix_spawn_file_actions_destroy(&file_actions);
   posix_spawnattr_destroy(&attr);
-  close(slave_fd);
 
   if (ret != 0) {
     close(master_fd);

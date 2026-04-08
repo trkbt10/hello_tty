@@ -1,0 +1,11 @@
+import {
+  "trkbt10/hello_tty/src/session" @session,
+}
+
+options(
+  targets: {
+    "types.mbt": [ "native" ],
+    "tree.mbt": [ "native" ],
+    "manager.mbt": [ "native" ],
+  },
+)

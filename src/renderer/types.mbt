@@ -8,6 +8,10 @@ pub struct RgbaColor {
 } derive(Show, Eq)
 
 ///|
+pub fn RgbaColor::new(r : Byte, g : Byte, b : Byte, a : Byte) -> RgbaColor {
+  { r, g, b, a }
+}
+
 pub fn RgbaColor::opaque(r : Byte, g : Byte, b : Byte) -> RgbaColor {
   { r, g, b, a: b'\xFF' }
 }

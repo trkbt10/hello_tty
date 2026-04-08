@@ -1127,29 +1127,41 @@ int hello_tty_gpu_frame_end(void) {
 
 #include <stdio.h>
 
-int hello_tty_gpu_init(uint64_t surface_handle, int width, int height) {
-    (void)surface_handle; (void)width; (void)height;
+// Multi-surface API stubs
+int hello_tty_gpu_init_device(void) {
     fprintf(stderr, "hello_tty: Vulkan SDK not available, GPU backend disabled\n");
     return -1;
 }
-int hello_tty_gpu_resize(int width, int height) { (void)width; (void)height; return -1; }
+int hello_tty_gpu_surface_create(uint64_t h, int w, int ht) {
+    (void)h; (void)w; (void)ht; return -1;
+}
+void hello_tty_gpu_surface_destroy(int id) { (void)id; }
+int hello_tty_gpu_surface_resize(int id, int w, int h) {
+    (void)id; (void)w; (void)h; return -1;
+}
 void hello_tty_gpu_shutdown(void) {}
 int hello_tty_gpu_atlas_create(int width, int height) { (void)width; (void)height; return -1; }
 int hello_tty_gpu_atlas_upload(int x, int y, int rw, int rh, const uint8_t *data, int len) {
     (void)x; (void)y; (void)rw; (void)rh; (void)data; (void)len; return -1;
 }
-int hello_tty_gpu_frame_begin(void) { return -1; }
-void hello_tty_gpu_frame_clear(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
-    (void)r; (void)g; (void)b; (void)a;
+void hello_tty_gpu_frame_clear(int id, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    (void)id; (void)r; (void)g; (void)b; (void)a;
 }
-int hello_tty_gpu_draw_cells(const float *vertices, int vertex_count) {
-    (void)vertices; (void)vertex_count; return -1;
+int hello_tty_gpu_frame_begin(int id) { (void)id; return -1; }
+int hello_tty_gpu_draw_cells(int id, const float *vertices, int vertex_count) {
+    (void)id; (void)vertices; (void)vertex_count; return -1;
 }
-void hello_tty_gpu_draw_cursor(float x, float y, float w, float h,
+void hello_tty_gpu_draw_cursor(int id, float x, float y, float w, float h,
     uint8_t r, uint8_t g, uint8_t b, uint8_t a, int style) {
-    (void)x; (void)y; (void)w; (void)h;
+    (void)id; (void)x; (void)y; (void)w; (void)h;
     (void)r; (void)g; (void)b; (void)a; (void)style;
 }
-int hello_tty_gpu_frame_end(void) { return -1; }
+int hello_tty_gpu_frame_end(int id) { (void)id; return -1; }
+
+// Legacy wrappers
+int hello_tty_gpu_init(uint64_t surface_handle, int width, int height) {
+    (void)surface_handle; (void)width; (void)height; return -1;
+}
+int hello_tty_gpu_resize(int width, int height) { (void)width; (void)height; return -1; }
 
 #endif // HELLO_TTY_HAS_VULKAN

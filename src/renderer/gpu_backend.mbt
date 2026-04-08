@@ -1,15 +1,20 @@
 ///|
-/// The GpuBackend executes RenderCommands on the GPU via wgpu.
+/// The GpuBackend manages GPU rendering across multiple surfaces.
 ///
-/// Consumes @font.FontEngine for glyph management.
+/// Multi-surface architecture:
+///   - Device-level resources (pipelines, atlas, font engine) are shared.
+///   - Each panel has its own surface_id for independent swapchain/framebuffer.
+///   - GpuBackend is a singleton that holds shared state and routes
+///     render calls to the correct surface.
+///
 /// The render loop is:
 ///   1. Renderer builds RenderCommand array from terminal state
-///   2. GpuBackend::execute_frame() processes commands via GPU FFI
+///   2. GpuBackend::execute_frame_on(surface_id, commands) renders to a specific surface
 pub struct GpuBackend {
   config : RendererConfig
-  /// Font engine (SoT for glyph management) — injected dependency.
+  /// Font engine (SoT for glyph management) — shared across all surfaces.
   font : @font.FontEngine
-  mut initialized : Bool
+  mut device_initialized : Bool
 }
 
 ///|
@@ -24,31 +29,28 @@ pub fn GpuBackend::new(
   config~ : RendererConfig = RendererConfig::default(),
   font~ : @font.FontEngine = @font.FontEngine::new(),
 ) -> GpuBackend {
-  { config, font, initialized: false }
+  { config, font, device_initialized: false }
 }
 
 ///|
-/// Initialize the GPU backend.
-/// surface_handle: platform-specific (CAMetalLayer* as Int, or 0 if already initialized).
-/// width, height: framebuffer size in pixels.
-pub fn GpuBackend::init(
-  self : GpuBackend,
-  surface_handle : Int,
-  width : Int,
-  height : Int,
-) -> Unit!GpuError {
-  let ret = @ffi.gpu_init(surface_handle, 0, width, height)
-  if ret < 0 {
-    raise InitFailed("GPU initialization failed")
+/// Initialize shared GPU resources: device, pipelines, font engine, atlas.
+/// Must be called once before creating any surfaces.
+pub fn GpuBackend::init_device(self : GpuBackend) -> Unit!GpuError {
+  if self.device_initialized {
+    return
   }
-  // Delegate font initialization to FontEngine
+  let ret = @ffi.gpu_init_device()
+  if ret < 0 {
+    raise InitFailed("GPU device initialization failed")
+  }
+  // Font engine
   try {
     self.font.init!()
   } catch {
     @font.FontInitFailed(msg) => raise FontError(msg)
     _ => raise FontError("Font initialization failed")
   }
-  // Create atlas texture on GPU
+  // Atlas texture
   let atlas_ret = @ffi.gpu_atlas_create(
     self.config.atlas_size,
     self.config.atlas_size,
@@ -56,106 +58,150 @@ pub fn GpuBackend::init(
   if atlas_ret < 0 {
     raise InitFailed("Atlas texture creation failed")
   }
-  self.initialized = true
+  self.device_initialized = true
 }
 
 ///|
-/// Resize the swapchain after a window resize.
-pub fn GpuBackend::resize(
+/// Create a new GPU surface for a panel.
+/// surface_handle: platform-specific (CAMetalLayer* as Int).
+/// Returns surface_id (>= 0) on success.
+pub fn GpuBackend::create_surface(
   self : GpuBackend,
+  surface_handle : Int,
+  width : Int,
+  height : Int,
+) -> Int!GpuError {
+  if !self.device_initialized {
+    self.init_device!()
+  }
+  let sid = @ffi.gpu_surface_create(surface_handle, 0, width, height)
+  if sid < 0 {
+    raise InitFailed("GPU surface creation failed")
+  }
+  sid
+}
+
+///|
+/// Destroy a GPU surface by ID.
+pub fn GpuBackend::destroy_surface(
+  _self : GpuBackend,
+  surface_id : Int,
+) -> Unit {
+  @ffi.gpu_surface_destroy(surface_id)
+}
+
+///|
+/// Resize a surface's swapchain.
+pub fn GpuBackend::resize_surface(
+  _self : GpuBackend,
+  surface_id : Int,
   width : Int,
   height : Int,
 ) -> Unit raise GpuError {
-  ignore(self)
-  let ret = @ffi.gpu_resize(width, height)
+  let ret = @ffi.gpu_surface_resize(surface_id, width, height)
   if ret < 0 {
     raise RenderError("Swapchain resize failed")
   }
 }
 
-// ensure_glyph is now in @font.FontEngine
-
 ///|
-/// Execute a sequence of render commands on the GPU.
-pub fn GpuBackend::execute(
+/// Execute a complete frame on a specific surface.
+pub fn GpuBackend::execute_frame_on(
   self : GpuBackend,
+  surface_id : Int,
   commands : Array[RenderCommand],
 ) -> Unit raise GpuError {
-  if !self.initialized {
-    raise RenderError("GpuBackend not initialized")
-  }
-  for i in 0..<commands.length() {
-    match commands[i] {
-      Clear(color) => @ffi.gpu_frame_clear(color.r, color.g, color.b, color.a)
-      DrawCells(cells) => self.draw_cell_quads(cells)
-      DrawCursor(cursor) => self.draw_cursor_quad(cursor)
-      Present => {
-        let begin_ret = @ffi.gpu_frame_begin()
-        if begin_ret < 0 {
-          // Swapchain out of date — caller should resize
-          raise RenderError("Swapchain out of date")
-        }
-        // Re-execute the commands within the frame
-        // (Clear was already set, cells/cursor were built)
-        let end_ret = @ffi.gpu_frame_end()
-        if end_ret < 0 {
-          raise RenderError("Frame presentation failed")
-        }
-      }
-    }
-  }
-}
-
-///|
-/// Execute a complete frame: begin, process all commands, end.
-pub fn GpuBackend::execute_frame(
-  self : GpuBackend,
-  commands : Array[RenderCommand],
-) -> Unit raise GpuError {
-  if !self.initialized {
-    raise RenderError("GpuBackend not initialized")
+  if !self.device_initialized {
+    raise RenderError("GpuBackend device not initialized")
   }
   // Set clear color from first Clear command
   for i in 0..<commands.length() {
     if commands[i] is Clear(color) {
-      @ffi.gpu_frame_clear(color.r, color.g, color.b, color.a)
+      @ffi.gpu_frame_clear(surface_id, color.r, color.g, color.b, color.a)
       break
     }
   }
   // Begin frame
-  let begin_ret = @ffi.gpu_frame_begin()
+  let begin_ret = @ffi.gpu_frame_begin(surface_id)
   if begin_ret < 0 {
     raise RenderError("Swapchain out of date")
   }
   // Process draw commands
   for i in 0..<commands.length() {
     match commands[i] {
-      Clear(_) => () // Already handled
-      DrawCells(cells) => self.draw_cell_quads(cells)
-      DrawCursor(cursor) => self.draw_cursor_quad(cursor)
-      Present => () // Handled at end
+      Clear(_) => ()
+      DrawCells(cells) => self.draw_cell_quads(surface_id, cells)
+      DrawCursor(cursor) => self.draw_cursor_quad(surface_id, cursor)
+      Present => ()
     }
   }
   // End frame and present
-  let end_ret = @ffi.gpu_frame_end()
+  let end_ret = @ffi.gpu_frame_end(surface_id)
   if end_ret < 0 {
     raise RenderError("Frame presentation failed")
   }
 }
 
 ///|
-/// Build and submit vertex data for cell quads.
-///
-/// Two-pass rendering:
-///   Pass 1 — Background: full-cell quads with bg color, UV=(0,0) (no texture)
-///   Pass 2 — Glyphs: bearing-positioned quads with fg color, atlas UV
-///
-/// This ensures:
-///   - Background fills the entire cell regardless of glyph size
-///   - Glyphs are rendered at their natural size without stretching
-///   - Baseline alignment via bearing_y relative to cell ascent
+/// Legacy: execute_frame on a default surface (backward compatibility).
+/// Uses legacy global surface (surface_id from hello_tty_gpu_init).
+pub fn GpuBackend::execute_frame(
+  self : GpuBackend,
+  commands : Array[RenderCommand],
+) -> Unit raise GpuError {
+  // Legacy path: use surface_id 0 (the legacy global surface)
+  self.execute_frame_on(0, commands)
+}
+
+///|
+/// Legacy: init device + create surface via old API.
+pub fn GpuBackend::init(
+  self : GpuBackend,
+  surface_handle : Int,
+  width : Int,
+  height : Int,
+) -> Unit!GpuError {
+  if !self.device_initialized {
+    // Use legacy init which creates device + surface 0
+    let ret = @ffi.gpu_init(surface_handle, 0, width, height)
+    if ret < 0 {
+      raise InitFailed("GPU initialization failed")
+    }
+    try {
+      self.font.init!()
+    } catch {
+      @font.FontInitFailed(msg) => raise FontError(msg)
+      _ => raise FontError("Font initialization failed")
+    }
+    let atlas_ret = @ffi.gpu_atlas_create(
+      self.config.atlas_size,
+      self.config.atlas_size,
+    )
+    if atlas_ret < 0 {
+      raise InitFailed("Atlas texture creation failed")
+    }
+    self.device_initialized = true
+  }
+}
+
+///|
+/// Legacy: resize surface 0.
+pub fn GpuBackend::resize(
+  _self : GpuBackend,
+  width : Int,
+  height : Int,
+) -> Unit raise GpuError {
+  let ret = @ffi.gpu_resize(width, height)
+  if ret < 0 {
+    raise RenderError("Swapchain resize failed")
+  }
+}
+
+///|
+/// Build and submit vertex data for cell quads on a specific surface.
 fn GpuBackend::draw_cell_quads(
   self : GpuBackend,
+  surface_id : Int,
   cells : Array[CellQuad],
 ) -> Unit {
   if cells.length() == 0 {
@@ -168,8 +214,6 @@ fn GpuBackend::draw_cell_quads(
   let atlas_h = Float::from_int(self.config.atlas_size)
   let ascent = Float::from_int(metrics.ascent)
   let floats_per_vertex = 12
-  // Pass 1: Backgrounds — one quad per cell
-  // Glyph quads are at most one per cell with a glyph
   let max_bg_verts = cells.length() * 6
   let max_fg_verts = cells.length() * 6
   let bg_verts : FixedArray[Float] = FixedArray::make(
@@ -185,11 +229,10 @@ fn GpuBackend::draw_cell_quads(
   let mut fg_count = 0
   for i in 0..<cells.length() {
     let cell = cells[i]
-    // Skip continuation cells (width=0) — the wide cell's quad already covers them
     if cell.cell_cols == 0 { continue }
     let cell_x = Float::from_int(cell.col) * cw
     let cell_y = Float::from_int(cell.row) * ch
-    let cell_w = cw * Float::from_int(cell.cell_cols) // 2*cw for wide chars
+    let cell_w = cw * Float::from_int(cell.cell_cols)
     let bg_r = Float::from_int(cell.bg.r.to_int()) / 255.0
     let bg_g = Float::from_int(cell.bg.g.to_int()) / 255.0
     let bg_b = Float::from_int(cell.bg.b.to_int()) / 255.0
@@ -198,34 +241,18 @@ fn GpuBackend::draw_cell_quads(
     let fg_g = Float::from_int(cell.fg.g.to_int()) / 255.0
     let fg_b = Float::from_int(cell.fg.b.to_int()) / 255.0
     let fg_a = Float::from_int(cell.fg.a.to_int()) / 255.0
-    // Background quad: full cell width (may span multiple columns), no texture
     emit_quad(
-      bg_verts,
-      bg_vi,
-      cell_x,
-      cell_y,
-      cell_x + cell_w,
-      cell_y + ch,
-      0.0,
-      0.0,
-      0.0,
-      0.0,
-      bg_r,
-      bg_g,
-      bg_b,
-      bg_a,
-      bg_r,
-      bg_g,
-      bg_b,
-      bg_a,
+      bg_verts, bg_vi,
+      cell_x, cell_y, cell_x + cell_w, cell_y + ch,
+      0.0, 0.0, 0.0, 0.0,
+      bg_r, bg_g, bg_b, bg_a,
+      bg_r, bg_g, bg_b, bg_a,
     )
     bg_vi += 6 * floats_per_vertex
-    // Glyph quad (if present): positioned using bearing
     match cell.glyph {
       Some(key) =>
         match self.font.ensure_glyph(key) {
           Some(rg) => {
-            // Upload bitmap to GPU if newly rasterized
             if rg.is_new && rg.bitmap_width > 0 && rg.bitmap_height > 0 {
               let _upload = @ffi.gpu_atlas_upload(
                 rg.cached.atlas_x,
@@ -236,39 +263,21 @@ fn GpuBackend::draw_cell_quads(
                 rg.bitmap_width * rg.bitmap_height * 4,
               )
             }
-            let g = rg.cached
-            // Glyph position within cell:
-            //   x = cell_x + bearing_x
-            //   y = cell_y + (ascent - bearing_y)   ← baseline-relative
-            let gx0 = cell_x + Float::from_int(g.bearing_x)
-            let gy0 = cell_y + (ascent - Float::from_int(g.bearing_y))
-            let gx1 = gx0 + Float::from_int(g.width)
-            let gy1 = gy0 + Float::from_int(g.height)
-            let u0 = Float::from_int(g.atlas_x) / atlas_w
-            let v0 = Float::from_int(g.atlas_y) / atlas_h
-            let u1 = Float::from_int(g.atlas_x + g.width) / atlas_w
-            let v1 = Float::from_int(g.atlas_y + g.height) / atlas_h
-            // For glyph pass: fg color as foreground, bg with alpha=0
-            // so the shader mixes: mix(transparent, fg, glyph_alpha)
+            let glyph = rg.cached
+            let gx0 = cell_x + Float::from_int(glyph.bearing_x)
+            let gy0 = cell_y + (ascent - Float::from_int(glyph.bearing_y))
+            let gx1 = gx0 + Float::from_int(glyph.width)
+            let gy1 = gy0 + Float::from_int(glyph.height)
+            let u0 = Float::from_int(glyph.atlas_x) / atlas_w
+            let v0 = Float::from_int(glyph.atlas_y) / atlas_h
+            let u1 = Float::from_int(glyph.atlas_x + glyph.width) / atlas_w
+            let v1 = Float::from_int(glyph.atlas_y + glyph.height) / atlas_h
             emit_quad(
-              fg_verts,
-              fg_vi,
-              gx0,
-              gy0,
-              gx1,
-              gy1,
-              u0,
-              v0,
-              u1,
-              v1,
-              fg_r,
-              fg_g,
-              fg_b,
-              fg_a,
-              0.0,
-              0.0,
-              0.0,
-              0.0,
+              fg_verts, fg_vi,
+              gx0, gy0, gx1, gy1,
+              u0, v0, u1, v1,
+              fg_r, fg_g, fg_b, fg_a,
+              0.0, 0.0, 0.0, 0.0,
             )
             fg_vi += 6 * floats_per_vertex
             fg_count += 6
@@ -278,12 +287,10 @@ fn GpuBackend::draw_cell_quads(
       None => ()
     }
   }
-  // Submit background pass
   let bg_count = cells.length() * 6
-  let _ret1 = @ffi.gpu_draw_cells(bg_verts, bg_count)
-  // Submit glyph pass
+  let _ret1 = @ffi.gpu_draw_cells(surface_id, bg_verts, bg_count)
   if fg_count > 0 {
-    let _ret2 = @ffi.gpu_draw_cells(fg_verts, fg_count)
+    let _ret2 = @ffi.gpu_draw_cells(surface_id, fg_verts, fg_count)
   }
 }
 
@@ -309,96 +316,46 @@ fn emit_quad(
   bg_b : Float,
   bg_a : Float,
 ) -> Unit {
-  let f = 12 // floats per vertex
+  let f = 12
   let mut vi = offset
-  // Vertex 0: top-left
-  verts[vi] = x0
-  verts[vi + 1] = y0
-  verts[vi + 2] = u0
-  verts[vi + 3] = v0
-  verts[vi + 4] = fg_r
-  verts[vi + 5] = fg_g
-  verts[vi + 6] = fg_b
-  verts[vi + 7] = fg_a
-  verts[vi + 8] = bg_r
-  verts[vi + 9] = bg_g
-  verts[vi + 10] = bg_b
-  verts[vi + 11] = bg_a
+  verts[vi] = x0; verts[vi + 1] = y0
+  verts[vi + 2] = u0; verts[vi + 3] = v0
+  verts[vi + 4] = fg_r; verts[vi + 5] = fg_g; verts[vi + 6] = fg_b; verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r; verts[vi + 9] = bg_g; verts[vi + 10] = bg_b; verts[vi + 11] = bg_a
   vi += f
-  // Vertex 1: top-right
-  verts[vi] = x1
-  verts[vi + 1] = y0
-  verts[vi + 2] = u1
-  verts[vi + 3] = v0
-  verts[vi + 4] = fg_r
-  verts[vi + 5] = fg_g
-  verts[vi + 6] = fg_b
-  verts[vi + 7] = fg_a
-  verts[vi + 8] = bg_r
-  verts[vi + 9] = bg_g
-  verts[vi + 10] = bg_b
-  verts[vi + 11] = bg_a
+  verts[vi] = x1; verts[vi + 1] = y0
+  verts[vi + 2] = u1; verts[vi + 3] = v0
+  verts[vi + 4] = fg_r; verts[vi + 5] = fg_g; verts[vi + 6] = fg_b; verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r; verts[vi + 9] = bg_g; verts[vi + 10] = bg_b; verts[vi + 11] = bg_a
   vi += f
-  // Vertex 2: bottom-left
-  verts[vi] = x0
-  verts[vi + 1] = y1
-  verts[vi + 2] = u0
-  verts[vi + 3] = v1
-  verts[vi + 4] = fg_r
-  verts[vi + 5] = fg_g
-  verts[vi + 6] = fg_b
-  verts[vi + 7] = fg_a
-  verts[vi + 8] = bg_r
-  verts[vi + 9] = bg_g
-  verts[vi + 10] = bg_b
-  verts[vi + 11] = bg_a
+  verts[vi] = x0; verts[vi + 1] = y1
+  verts[vi + 2] = u0; verts[vi + 3] = v1
+  verts[vi + 4] = fg_r; verts[vi + 5] = fg_g; verts[vi + 6] = fg_b; verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r; verts[vi + 9] = bg_g; verts[vi + 10] = bg_b; verts[vi + 11] = bg_a
   vi += f
-  // Vertex 3: top-right (second triangle)
-  verts[vi] = x1
-  verts[vi + 1] = y0
-  verts[vi + 2] = u1
-  verts[vi + 3] = v0
-  verts[vi + 4] = fg_r
-  verts[vi + 5] = fg_g
-  verts[vi + 6] = fg_b
-  verts[vi + 7] = fg_a
-  verts[vi + 8] = bg_r
-  verts[vi + 9] = bg_g
-  verts[vi + 10] = bg_b
-  verts[vi + 11] = bg_a
+  verts[vi] = x1; verts[vi + 1] = y0
+  verts[vi + 2] = u1; verts[vi + 3] = v0
+  verts[vi + 4] = fg_r; verts[vi + 5] = fg_g; verts[vi + 6] = fg_b; verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r; verts[vi + 9] = bg_g; verts[vi + 10] = bg_b; verts[vi + 11] = bg_a
   vi += f
-  // Vertex 4: bottom-right
-  verts[vi] = x1
-  verts[vi + 1] = y1
-  verts[vi + 2] = u1
-  verts[vi + 3] = v1
-  verts[vi + 4] = fg_r
-  verts[vi + 5] = fg_g
-  verts[vi + 6] = fg_b
-  verts[vi + 7] = fg_a
-  verts[vi + 8] = bg_r
-  verts[vi + 9] = bg_g
-  verts[vi + 10] = bg_b
-  verts[vi + 11] = bg_a
+  verts[vi] = x1; verts[vi + 1] = y1
+  verts[vi + 2] = u1; verts[vi + 3] = v1
+  verts[vi + 4] = fg_r; verts[vi + 5] = fg_g; verts[vi + 6] = fg_b; verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r; verts[vi + 9] = bg_g; verts[vi + 10] = bg_b; verts[vi + 11] = bg_a
   vi += f
-  // Vertex 5: bottom-left (second triangle)
-  verts[vi] = x0
-  verts[vi + 1] = y1
-  verts[vi + 2] = u0
-  verts[vi + 3] = v1
-  verts[vi + 4] = fg_r
-  verts[vi + 5] = fg_g
-  verts[vi + 6] = fg_b
-  verts[vi + 7] = fg_a
-  verts[vi + 8] = bg_r
-  verts[vi + 9] = bg_g
-  verts[vi + 10] = bg_b
-  verts[vi + 11] = bg_a
+  verts[vi] = x0; verts[vi + 1] = y1
+  verts[vi + 2] = u0; verts[vi + 3] = v1
+  verts[vi + 4] = fg_r; verts[vi + 5] = fg_g; verts[vi + 6] = fg_b; verts[vi + 7] = fg_a
+  verts[vi + 8] = bg_r; verts[vi + 9] = bg_g; verts[vi + 10] = bg_b; verts[vi + 11] = bg_a
 }
 
 ///|
-/// Draw the cursor as a colored quad.
-fn GpuBackend::draw_cursor_quad(self : GpuBackend, cursor : CursorQuad) -> Unit {
+/// Draw the cursor as a colored quad on a specific surface.
+fn GpuBackend::draw_cursor_quad(
+  self : GpuBackend,
+  surface_id : Int,
+  cursor : CursorQuad,
+) -> Unit {
   if !cursor.visible {
     return
   }
@@ -413,6 +370,7 @@ fn GpuBackend::draw_cursor_quad(self : GpuBackend, cursor : CursorQuad) -> Unit 
     @terminal.Bar => 2
   }
   @ffi.gpu_draw_cursor(
+    surface_id,
     x, y, w, h,
     cursor.color.r, cursor.color.g, cursor.color.b, cursor.color.a,
     style_int,
@@ -420,18 +378,16 @@ fn GpuBackend::draw_cursor_quad(self : GpuBackend, cursor : CursorQuad) -> Unit 
 }
 
 ///|
-/// Get the cell dimensions from the font engine.
 pub fn GpuBackend::get_cell_size(self : GpuBackend) -> (Int, Int) {
   let m = self.font.get_metrics()
   (m.cell_width, m.cell_height)
 }
 
 ///|
-/// Shut down the GPU backend and font engine.
 pub fn GpuBackend::shutdown(self : GpuBackend) -> Unit {
-  if self.initialized {
+  if self.device_initialized {
     self.font.shutdown()
     @ffi.gpu_shutdown()
-    self.initialized = false
+    self.device_initialized = false
   }
 }

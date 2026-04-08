@@ -5,7 +5,14 @@
 /// The result tells the adapter whether to:
 ///   - Send directly to PTY (special keys, ctrl+key)
 ///   - Forward to IME for composition (printable characters)
-///   - Handle as clipboard operation (cmd+c/v)
+///   - Handle as a UI action (split, tab, clipboard, etc.)
+///
+/// Classification order:
+///   1. IME composing → ForwardToIme (all keys go to IME)
+///   2. Cmd+key → keymap table lookup (configurable actions)
+///   3. Ctrl+key → DirectToPty (terminal control characters)
+///   4. Function keys → DirectToPty (escape sequences)
+///   5. Everything else → ForwardToIme (printable text via IME)
 ///
 /// Parameters:
 ///   key_code: Unicode scalar value (or function key code 0xF700+)
@@ -16,29 +23,29 @@ pub fn classify_key(
   modifiers : Int,
   has_marked_text : Bool,
 ) -> KeyClassification {
-  let is_super = modifiers.land(mod_super) != 0
-  let is_ctrl = modifiers.land(mod_ctrl) != 0
-  // Cmd+C → copy, Cmd+V → paste
-  if is_super {
-    if key_code == 0x63 {
-      // 'c'
-      return ClipboardCopy
-    }
-    if key_code == 0x76 {
-      // 'v'
-      return ClipboardPaste
-    }
-  }
   // If IME has marked text, ALL keys go to IME
   // (including backspace to delete composed chars)
   if has_marked_text {
     return ForwardToIme
   }
-  // Ctrl+key → directly to PTY
+  let is_super = modifiers.land(mod_super) != 0
+  let is_ctrl = modifiers.land(mod_ctrl) != 0
+  // ---- Cmd+key: look up in the keybinding table ----
+  if is_super {
+    // Build the lookup modifiers — only include the modifiers that the
+    // keymap cares about (super is always set, plus shift/alt/ctrl).
+    match global_keymap.lookup(key_code, modifiers) {
+      Some(action) => return action
+      None => ()
+    }
+  }
+  // ---- Ctrl+key → directly to PTY ----
+  // Terminal control characters: Ctrl+C=SIGINT, Ctrl+D=EOF, etc.
+  // These must never be intercepted by the app — always sent to PTY.
   if is_ctrl {
     return DirectToPty
   }
-  // Function keys (arrows, F1-F12, Home, End, etc.) → directly to PTY
+  // ---- Function keys (arrows, F1-F12, Home, End, etc.) → directly to PTY ----
   if key_code >= 0xF700 && key_code <= 0xF8FF {
     return DirectToPty
   }
@@ -55,7 +62,7 @@ pub fn classify_key(
 /// This is the authoritative mapping from key codes to terminal escape
 /// sequences (CSI, SS3, etc.). Handles:
 ///   - Normal ASCII keys
-///   - Ctrl+key (Ctrl+C = 0x03, etc.)
+///   - Ctrl+key (both letter form 0x40-0x7E and raw control code 0x00-0x1F)
 ///   - Alt+key (ESC prefix)
 ///   - Arrow keys (with application cursor key mode)
 ///   - Function keys (F1-F12)
@@ -69,9 +76,17 @@ pub fn translate_key_input(
   let shift = modifiers.land(mod_shift) != 0
   let alt = modifiers.land(mod_alt) != 0
   // Ctrl+key → control code
+  // Case 1: Platform gives us the letter (key_code 0x40-0x7E).
+  //   e.g., Ctrl+C as key_code=0x63 ('c') → compute 0x63 & 0x1F = 0x03.
   if ctrl && key_code >= 0x40 && key_code <= 0x7E {
     let ctrl_code = key_code.land(0x1F)
     return ctrl_code.unsafe_to_char().to_string()
+  }
+  // Case 2: Platform gives us the raw control code directly (key_code 0x00-0x1F).
+  //   e.g., macOS charactersIgnoringModifiers with Ctrl held returns 0x03 for Ctrl+C.
+  //   Just pass it through — it's already the correct byte.
+  if ctrl && key_code >= 0x00 && key_code <= 0x1F {
+    return key_code.unsafe_to_char().to_string()
   }
   // Alt → ESC prefix
   if alt && key_code >= 0x20 && key_code <= 0x7E {

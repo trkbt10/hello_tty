@@ -115,4 +115,19 @@ pub fn ScreenSet::resize(
   self.alternate.resize(new_rows, new_cols)
   self.rows = new_rows
   self.cols = new_cols
+  // Clamp cursors to new grid bounds.
+  // Without this, a resize that shrinks the grid can leave cursors
+  // pointing beyond the valid range, causing panics on the next write.
+  self.primary_cursor.move_to(
+    self.primary_cursor.row,
+    self.primary_cursor.col,
+    new_rows,
+    new_cols,
+  )
+  self.alternate_cursor.move_to(
+    self.alternate_cursor.row,
+    self.alternate_cursor.col,
+    new_rows,
+    new_cols,
+  )
 }

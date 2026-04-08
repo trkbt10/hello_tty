@@ -41,12 +41,51 @@
 #define mbt_ffi_gpu_init          _M0FP47trkbt1010hello__tty3src6bridge14ffi__gpu__init
 #define mbt_ffi_gpu_resize        _M0FP47trkbt1010hello__tty3src6bridge16ffi__gpu__resize
 #define mbt_ffi_render_frame      _M0FP47trkbt1010hello__tty3src6bridge18ffi__render__frame
+#define mbt_ffi_render_frame_for  _M0FP47trkbt1010hello__tty3src6bridge23ffi__render__frame__for
 
 // Input classification
 #define mbt_ffi_classify_key      _M0FP47trkbt1010hello__tty3src6bridge18ffi__classify__key
 
-// Theme
+// Theme & metrics
 #define mbt_ffi_get_theme         _M0FP47trkbt1010hello__tty3src6bridge15ffi__get__theme
+#define mbt_ffi_get_cell_metrics  _M0FP47trkbt1010hello__tty3src6bridge23ffi__get__cell__metrics
+
+// Tab & Panel management (layout-aware)
+#define mbt_ffi_create_tab        _M0FP47trkbt1010hello__tty3src6bridge16ffi__create__tab
+#define mbt_ffi_close_tab         _M0FP47trkbt1010hello__tty3src6bridge15ffi__close__tab
+#define mbt_ffi_switch_tab        _M0FP47trkbt1010hello__tty3src6bridge16ffi__switch__tab
+#define mbt_ffi_next_tab          _M0FP47trkbt1010hello__tty3src6bridge14ffi__next__tab
+#define mbt_ffi_prev_tab          _M0FP47trkbt1010hello__tty3src6bridge14ffi__prev__tab
+#define mbt_ffi_list_tabs         _M0FP47trkbt1010hello__tty3src6bridge15ffi__list__tabs
+#define mbt_ffi_split_panel       _M0FP47trkbt1010hello__tty3src6bridge17ffi__split__panel
+#define mbt_ffi_close_panel       _M0FP47trkbt1010hello__tty3src6bridge17ffi__close__panel
+#define mbt_ffi_focus_panel       _M0FP47trkbt1010hello__tty3src6bridge17ffi__focus__panel
+#define mbt_ffi_focus_panel_by_index _M0FP47trkbt1010hello__tty3src6bridge28ffi__focus__panel__by__index
+#define mbt_ffi_focus_direction   _M0FP47trkbt1010hello__tty3src6bridge21ffi__focus__direction
+#define mbt_ffi_get_layout        _M0FP47trkbt1010hello__tty3src6bridge16ffi__get__layout
+#define mbt_ffi_get_all_panels    _M0FP47trkbt1010hello__tty3src6bridge21ffi__get__all__panels
+#define mbt_ffi_get_focused_panel_id _M0FP47trkbt1010hello__tty3src6bridge28ffi__get__focused__panel__id
+
+// Panel resize notification
+#define mbt_ffi_notify_panel_resize _M0FP47trkbt1010hello__tty3src6bridge26ffi__notify__panel__resize
+
+// Layout resize (MoonBit SoT for panel dimensions)
+#define mbt_ffi_resize_layout     _M0FP47trkbt1010hello__tty3src6bridge19ffi__resize__layout
+#define mbt_ffi_resize_layout_px  _M0FP47trkbt1010hello__tty3src6bridge23ffi__resize__layout__px
+
+// Coordinate conversion
+#define mbt_ffi_pixel_to_grid     _M0FP47trkbt1010hello__tty3src6bridge20ffi__pixel__to__grid
+
+// GPU multi-surface
+#define mbt_ffi_gpu_register_surface _M0FP47trkbt1010hello__tty3src6bridge27ffi__gpu__register__surface
+#define mbt_ffi_gpu_surface_destroy _M0FP47trkbt1010hello__tty3src6bridge26ffi__gpu__surface__destroy
+#define mbt_ffi_gpu_surface_resize  _M0FP47trkbt1010hello__tty3src6bridge25ffi__gpu__surface__resize
+
+// Session-targeted operations
+#define mbt_ffi_process_output_for _M0FP47trkbt1010hello__tty3src6bridge25ffi__process__output__for
+#define mbt_ffi_get_grid_for      _M0FP47trkbt1010hello__tty3src6bridge19ffi__get__grid__for
+#define mbt_ffi_handle_key_for    _M0FP47trkbt1010hello__tty3src6bridge21ffi__handle__key__for
+#define mbt_ffi_resize_session    _M0FP47trkbt1010hello__tty3src6bridge20ffi__resize__session
 
 // ---------- MoonBit runtime interface ----------
 
@@ -80,12 +119,51 @@ extern moonbit_bytes_t mbt_ffi_get_cursor(void);
 extern int32_t         mbt_ffi_gpu_init(moonbit_bytes_t surface, moonbit_bytes_t width, moonbit_bytes_t height);
 extern int32_t         mbt_ffi_gpu_resize(moonbit_bytes_t width, moonbit_bytes_t height);
 extern int32_t         mbt_ffi_render_frame(void);
+extern int32_t         mbt_ffi_render_frame_for(moonbit_bytes_t session_id);
 
 // Input classification
 extern int32_t         mbt_ffi_classify_key(moonbit_bytes_t key, moonbit_bytes_t mods, moonbit_bytes_t has_marked);
 
-// Theme
+// Theme & metrics
 extern moonbit_bytes_t mbt_ffi_get_theme(void);
+extern moonbit_bytes_t mbt_ffi_get_cell_metrics(void);
+
+// Tab & Panel management
+extern moonbit_bytes_t mbt_ffi_create_tab(moonbit_bytes_t rows, moonbit_bytes_t cols);
+extern int32_t         mbt_ffi_close_tab(moonbit_bytes_t tab_id);
+extern int32_t         mbt_ffi_switch_tab(moonbit_bytes_t tab_id);
+extern int32_t         mbt_ffi_next_tab(void);
+extern int32_t         mbt_ffi_prev_tab(void);
+extern moonbit_bytes_t mbt_ffi_list_tabs(void);
+extern moonbit_bytes_t mbt_ffi_split_panel(moonbit_bytes_t panel_id, moonbit_bytes_t direction);
+extern int32_t         mbt_ffi_close_panel(moonbit_bytes_t panel_id);
+extern int32_t         mbt_ffi_focus_panel(moonbit_bytes_t panel_id);
+extern int32_t         mbt_ffi_focus_panel_by_index(moonbit_bytes_t index);
+extern int32_t         mbt_ffi_focus_direction(moonbit_bytes_t direction);
+extern moonbit_bytes_t mbt_ffi_get_layout(void);
+extern moonbit_bytes_t mbt_ffi_get_all_panels(void);
+extern int32_t         mbt_ffi_get_focused_panel_id(void);
+
+// Panel resize notification
+extern moonbit_bytes_t mbt_ffi_notify_panel_resize(moonbit_bytes_t panel_id, moonbit_bytes_t first_size_px, moonbit_bytes_t total_size_px);
+
+// Layout resize
+extern moonbit_bytes_t mbt_ffi_resize_layout(moonbit_bytes_t rows, moonbit_bytes_t cols);
+extern moonbit_bytes_t mbt_ffi_resize_layout_px(moonbit_bytes_t width_px, moonbit_bytes_t height_px);
+
+// Coordinate conversion
+extern moonbit_bytes_t mbt_ffi_pixel_to_grid(moonbit_bytes_t x_px, moonbit_bytes_t y_px, moonbit_bytes_t view_height_px);
+
+// GPU multi-surface
+extern int32_t         mbt_ffi_gpu_register_surface(moonbit_bytes_t session_id, moonbit_bytes_t surface_id);
+extern int32_t         mbt_ffi_gpu_surface_destroy(moonbit_bytes_t session_id);
+extern int32_t         mbt_ffi_gpu_surface_resize(moonbit_bytes_t session_id, moonbit_bytes_t width, moonbit_bytes_t height);
+
+// Session-targeted operations
+extern int32_t         mbt_ffi_process_output_for(moonbit_bytes_t session_id, moonbit_bytes_t data);
+extern moonbit_bytes_t mbt_ffi_get_grid_for(moonbit_bytes_t session_id);
+extern moonbit_bytes_t mbt_ffi_handle_key_for(moonbit_bytes_t session_id, moonbit_bytes_t key, moonbit_bytes_t mods);
+extern int32_t         mbt_ffi_resize_session(moonbit_bytes_t session_id, moonbit_bytes_t rows, moonbit_bytes_t cols);
 
 // ---------- Initialization ----------
 
@@ -239,6 +317,12 @@ int32_t hello_tty_render_frame(void) {
     return mbt_ffi_render_frame();
 }
 
+int32_t hello_tty_render_frame_for(const char *session_id) {
+    if (!moonbit_initialized) return -1;
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    return mbt_ffi_render_frame_for(sb);
+}
+
 int32_t hello_tty_classify_key(const char *key_code, const char *modifiers, const char *has_marked_text) {
     ensure_init();
     moonbit_bytes_t kb = cstr_to_moonbit_bytes(key_code);
@@ -256,8 +340,199 @@ int32_t hello_tty_gpu_resize_bridge(const char *width, const char *height) {
 
 // ---------- Theme ----------
 
+// ---------- Layout Resize ----------
+
+char *hello_tty_resize_layout(const char *total_rows, const char *total_cols) {
+    ensure_init();
+    moonbit_bytes_t rb = cstr_to_moonbit_bytes(total_rows);
+    moonbit_bytes_t cb = cstr_to_moonbit_bytes(total_cols);
+    moonbit_bytes_t result = mbt_ffi_resize_layout(rb, cb);
+    return moonbit_bytes_to_cstr(result);
+}
+
+char *hello_tty_resize_layout_px(const char *width_px, const char *height_px) {
+    ensure_init();
+    moonbit_bytes_t wb = cstr_to_moonbit_bytes(width_px);
+    moonbit_bytes_t hb = cstr_to_moonbit_bytes(height_px);
+    moonbit_bytes_t result = mbt_ffi_resize_layout_px(wb, hb);
+    return moonbit_bytes_to_cstr(result);
+}
+
+// ---------- Coordinate Conversion ----------
+
+char *hello_tty_pixel_to_grid(const char *x_px, const char *y_px, const char *view_height_px) {
+    ensure_init();
+    moonbit_bytes_t xb = cstr_to_moonbit_bytes(x_px);
+    moonbit_bytes_t yb = cstr_to_moonbit_bytes(y_px);
+    moonbit_bytes_t hb = cstr_to_moonbit_bytes(view_height_px);
+    moonbit_bytes_t result = mbt_ffi_pixel_to_grid(xb, yb, hb);
+    return moonbit_bytes_to_cstr(result);
+}
+
+// ---------- Panel Resize Notification ----------
+
+char *hello_tty_notify_panel_resize(const char *panel_id,
+                                     const char *first_size_px,
+                                     const char *total_size_px) {
+    ensure_init();
+    moonbit_bytes_t pb = cstr_to_moonbit_bytes(panel_id);
+    moonbit_bytes_t fb = cstr_to_moonbit_bytes(first_size_px);
+    moonbit_bytes_t tb = cstr_to_moonbit_bytes(total_size_px);
+    moonbit_bytes_t result = mbt_ffi_notify_panel_resize(pb, fb, tb);
+    return moonbit_bytes_to_cstr(result);
+}
+
+// ---------- GPU Multi-Surface ----------
+
+int32_t hello_tty_gpu_register_surface(const char *session_id, const char *surface_id) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    moonbit_bytes_t ib = cstr_to_moonbit_bytes(surface_id);
+    return mbt_ffi_gpu_register_surface(sb, ib);
+}
+
+int32_t hello_tty_gpu_surface_destroy_bridge(const char *session_id) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    return mbt_ffi_gpu_surface_destroy(sb);
+}
+
+int32_t hello_tty_gpu_surface_resize_bridge(const char *session_id, const char *width, const char *height) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    moonbit_bytes_t wb = cstr_to_moonbit_bytes(width);
+    moonbit_bytes_t hb = cstr_to_moonbit_bytes(height);
+    return mbt_ffi_gpu_surface_resize(sb, wb, hb);
+}
+
 char *hello_tty_get_theme(void) {
     ensure_init();
     moonbit_bytes_t result = mbt_ffi_get_theme();
     return moonbit_bytes_to_cstr(result);
+}
+
+char *hello_tty_get_cell_metrics(void) {
+    ensure_init();
+    moonbit_bytes_t result = mbt_ffi_get_cell_metrics();
+    return moonbit_bytes_to_cstr(result);
+}
+
+// ---------- Tab & Panel Management ----------
+
+char *hello_tty_create_tab(const char *rows, const char *cols) {
+    ensure_init();
+    moonbit_bytes_t rb = cstr_to_moonbit_bytes(rows);
+    moonbit_bytes_t cb = cstr_to_moonbit_bytes(cols);
+    moonbit_bytes_t result = mbt_ffi_create_tab(rb, cb);
+    return moonbit_bytes_to_cstr(result);
+}
+
+int32_t hello_tty_close_tab(const char *tab_id) {
+    ensure_init();
+    moonbit_bytes_t ib = cstr_to_moonbit_bytes(tab_id);
+    return mbt_ffi_close_tab(ib);
+}
+
+int32_t hello_tty_switch_tab(const char *tab_id) {
+    ensure_init();
+    moonbit_bytes_t ib = cstr_to_moonbit_bytes(tab_id);
+    return mbt_ffi_switch_tab(ib);
+}
+
+int32_t hello_tty_next_tab(void) {
+    ensure_init();
+    return mbt_ffi_next_tab();
+}
+
+int32_t hello_tty_prev_tab(void) {
+    ensure_init();
+    return mbt_ffi_prev_tab();
+}
+
+char *hello_tty_list_tabs(void) {
+    ensure_init();
+    moonbit_bytes_t result = mbt_ffi_list_tabs();
+    return moonbit_bytes_to_cstr(result);
+}
+
+char *hello_tty_split_panel(const char *panel_id, const char *direction) {
+    ensure_init();
+    moonbit_bytes_t pb = cstr_to_moonbit_bytes(panel_id);
+    moonbit_bytes_t db = cstr_to_moonbit_bytes(direction);
+    moonbit_bytes_t result = mbt_ffi_split_panel(pb, db);
+    return moonbit_bytes_to_cstr(result);
+}
+
+int32_t hello_tty_close_panel(const char *panel_id) {
+    ensure_init();
+    moonbit_bytes_t pb = cstr_to_moonbit_bytes(panel_id);
+    return mbt_ffi_close_panel(pb);
+}
+
+int32_t hello_tty_focus_panel(const char *panel_id) {
+    ensure_init();
+    moonbit_bytes_t pb = cstr_to_moonbit_bytes(panel_id);
+    return mbt_ffi_focus_panel(pb);
+}
+
+int32_t hello_tty_focus_panel_by_index(const char *index) {
+    ensure_init();
+    moonbit_bytes_t ib = cstr_to_moonbit_bytes(index);
+    return mbt_ffi_focus_panel_by_index(ib);
+}
+
+int32_t hello_tty_focus_direction(const char *direction) {
+    ensure_init();
+    moonbit_bytes_t db = cstr_to_moonbit_bytes(direction);
+    return mbt_ffi_focus_direction(db);
+}
+
+char *hello_tty_get_layout(void) {
+    ensure_init();
+    moonbit_bytes_t result = mbt_ffi_get_layout();
+    return moonbit_bytes_to_cstr(result);
+}
+
+char *hello_tty_get_all_panels(void) {
+    ensure_init();
+    moonbit_bytes_t result = mbt_ffi_get_all_panels();
+    return moonbit_bytes_to_cstr(result);
+}
+
+int32_t hello_tty_get_focused_panel_id(void) {
+    ensure_init();
+    return mbt_ffi_get_focused_panel_id();
+}
+
+// ---------- Session-Targeted Operations ----------
+
+int32_t hello_tty_process_output_for(const char *session_id, const char *data) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    moonbit_bytes_t db = cstr_to_moonbit_bytes(data);
+    return mbt_ffi_process_output_for(sb, db);
+}
+
+char *hello_tty_get_grid_for(const char *session_id) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    moonbit_bytes_t result = mbt_ffi_get_grid_for(sb);
+    return moonbit_bytes_to_cstr(result);
+}
+
+char *hello_tty_handle_key_for(const char *session_id, const char *key_code, const char *modifiers) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    moonbit_bytes_t kb = cstr_to_moonbit_bytes(key_code);
+    moonbit_bytes_t mb = cstr_to_moonbit_bytes(modifiers);
+    moonbit_bytes_t result = mbt_ffi_handle_key_for(sb, kb, mb);
+    return moonbit_bytes_to_cstr(result);
+}
+
+int32_t hello_tty_resize_session(const char *session_id, const char *rows, const char *cols) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    moonbit_bytes_t rb = cstr_to_moonbit_bytes(rows);
+    moonbit_bytes_t cb = cstr_to_moonbit_bytes(cols);
+    return mbt_ffi_resize_session(sb, rb, cb);
 }

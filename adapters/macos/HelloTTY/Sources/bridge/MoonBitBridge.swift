@@ -32,12 +32,34 @@ class MoonBitBridge {
     // Input classification
     private typealias ClassifyKeyFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
 
-    // Session management
+    // Session management (legacy)
     private typealias CreateSessionFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
     private typealias DestroySessionFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
     private typealias SwitchSessionFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
     private typealias ListSessionsFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
     private typealias GetActiveSessionFn = @convention(c) () -> Int32
+
+    // Tab & Panel management (layout-aware)
+    private typealias CreateTabFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
+    private typealias CloseTabFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+    private typealias SwitchTabFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+    private typealias NextTabFn = @convention(c) () -> Int32
+    private typealias PrevTabFn = @convention(c) () -> Int32
+    private typealias ListTabsFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
+    private typealias SplitPanelFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
+    private typealias ClosePanelFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+    private typealias FocusPanelFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+    private typealias FocusPanelByIndexFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+    private typealias FocusDirectionFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+    private typealias GetLayoutFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
+    private typealias GetAllPanelsFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
+    private typealias GetFocusedPanelIdFn = @convention(c) () -> Int32
+
+    // Session-targeted operations
+    private typealias ProcessOutputForFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
+    private typealias GetGridForFn = @convention(c) (UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
+    private typealias HandleKeyForFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
+    private typealias ResizeSessionFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
 
     // Theme
     private typealias GetThemeFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
@@ -53,8 +75,16 @@ class MoonBitBridge {
     private typealias RenderFrameFn = @convention(c) () -> Int32
     private typealias GpuResizeBridgeFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
 
+    private typealias RenderFrameForFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+
+    // GPU multi-surface bridge
+    private typealias GpuRegisterSurfaceFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
+    private typealias GpuSurfaceDestroyBridgeFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+    private typealias GpuSurfaceResizeBridgeFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
+
     // Direct GPU FFI (for surface init that needs raw pointer)
     private typealias GpuInitDirectFn = @convention(c) (UInt64, Int32, Int32) -> Int32
+    private typealias GpuSurfaceCreateDirectFn = @convention(c) (UInt64, Int32, Int32) -> Int32
 
     // Loaded function pointers
     private var fnInit: InitFn?
@@ -78,15 +108,38 @@ class MoonBitBridge {
     // Input
     private var fnClassifyKey: ClassifyKeyFn?
 
-    // Session management
+    // Session management (legacy)
     private var fnCreateSession: CreateSessionFn?
     private var fnDestroySession: DestroySessionFn?
     private var fnSwitchSession: SwitchSessionFn?
     private var fnListSessions: ListSessionsFn?
     private var fnGetActiveSession: GetActiveSessionFn?
 
-    // Theme
+    // Tab & Panel management
+    private var fnCreateTab: CreateTabFn?
+    private var fnCloseTab: CloseTabFn?
+    private var fnSwitchTab: SwitchTabFn?
+    private var fnNextTab: NextTabFn?
+    private var fnPrevTab: PrevTabFn?
+    private var fnListTabs: ListTabsFn?
+    private var fnSplitPanel: SplitPanelFn?
+    private var fnClosePanel: ClosePanelFn?
+    private var fnFocusPanel: FocusPanelFn?
+    private var fnFocusPanelByIndex: FocusPanelByIndexFn?
+    private var fnFocusDirection: FocusDirectionFn?
+    private var fnGetLayout: GetLayoutFn?
+    private var fnGetAllPanels: GetAllPanelsFn?
+    private var fnGetFocusedPanelId: GetFocusedPanelIdFn?
+
+    // Session-targeted operations
+    private var fnProcessOutputFor: ProcessOutputForFn?
+    private var fnGetGridFor: GetGridForFn?
+    private var fnHandleKeyFor: HandleKeyForFn?
+    private var fnResizeSession: ResizeSessionFn?
+
+    // Theme & metrics
     private var fnGetTheme: GetThemeFn?
+    private var fnGetCellMetrics: GetThemeFn?  // same signature: () -> UnsafeMutablePointer<CChar>?
 
     // Font
     private var fnFontInit: FontInitFn?
@@ -97,9 +150,15 @@ class MoonBitBridge {
     // GPU (MoonBit pipeline bridge)
     private var fnGpuInitBridge: GpuInitBridgeFn?
     private var fnRenderFrame: RenderFrameFn?
+    private var fnRenderFrameFor: RenderFrameForFn?
     private var fnGpuResizeBridge: GpuResizeBridgeFn?
+    // GPU multi-surface
+    private var fnGpuRegisterSurface: GpuRegisterSurfaceFn?
+    private var fnGpuSurfaceDestroyBridge: GpuSurfaceDestroyBridgeFn?
+    private var fnGpuSurfaceResizeBridge: GpuSurfaceResizeBridgeFn?
     // Direct GPU FFI (for raw surface init)
     private var fnGpuInitDirect: GpuInitDirectFn?
+    private var fnGpuSurfaceCreateDirect: GpuSurfaceCreateDirectFn?
 
     private var handle: UnsafeMutableRawPointer?
     private(set) var isLoaded = false
@@ -218,8 +277,41 @@ class MoonBitBridge {
         fnListSessions = sym("hello_tty_list_sessions")
         fnGetActiveSession = sym("hello_tty_get_active_session")
 
-        // Theme
+        // Tab & Panel management
+        fnCreateTab = sym("hello_tty_create_tab")
+        fnCloseTab = sym("hello_tty_close_tab")
+        fnSwitchTab = sym("hello_tty_switch_tab")
+        fnNextTab = sym("hello_tty_next_tab")
+        fnPrevTab = sym("hello_tty_prev_tab")
+        fnListTabs = sym("hello_tty_list_tabs")
+        fnSplitPanel = sym("hello_tty_split_panel")
+        fnClosePanel = sym("hello_tty_close_panel")
+        fnFocusPanel = sym("hello_tty_focus_panel")
+        fnFocusPanelByIndex = sym("hello_tty_focus_panel_by_index")
+        fnFocusDirection = sym("hello_tty_focus_direction")
+        fnGetLayout = sym("hello_tty_get_layout")
+        fnGetAllPanels = sym("hello_tty_get_all_panels")
+        fnGetFocusedPanelId = sym("hello_tty_get_focused_panel_id")
+
+        // Session-targeted operations
+        fnProcessOutputFor = sym("hello_tty_process_output_for")
+        fnGetGridFor = sym("hello_tty_get_grid_for")
+        fnHandleKeyFor = sym("hello_tty_handle_key_for")
+        fnResizeSession = sym("hello_tty_resize_session")
+
+        // Layout resize (MoonBit SoT)
+        fnResizeLayout = sym("hello_tty_resize_layout")
+        fnResizeLayoutPx = sym("hello_tty_resize_layout_px")
+
+        // Panel resize notification
+        fnNotifyPanelResize = sym("hello_tty_notify_panel_resize")
+
+        // Coordinate conversion
+        fnPixelToGrid = sym("hello_tty_pixel_to_grid")
+
+        // Theme & metrics
         fnGetTheme = sym("hello_tty_get_theme")
+        fnGetCellMetrics = sym("hello_tty_get_cell_metrics")
 
         // Font
         fnFontInit = sym("hello_tty_font_init")
@@ -230,9 +322,16 @@ class MoonBitBridge {
         // GPU (MoonBit pipeline bridge)
         fnGpuInitBridge = sym("hello_tty_gpu_init_bridge")
         fnRenderFrame = sym("hello_tty_render_frame")
+        fnRenderFrameFor = sym("hello_tty_render_frame_for")
         fnGpuResizeBridge = sym("hello_tty_gpu_resize_bridge")
+        // GPU multi-surface
+        fnGpuRegisterSurface = sym("hello_tty_gpu_register_surface")
+        fnGpuSurfaceDestroyBridge = sym("hello_tty_gpu_surface_destroy_bridge")
+        fnGpuSurfaceResizeBridge = sym("hello_tty_gpu_surface_resize_bridge")
         // Direct GPU FFI (for raw surface init)
         fnGpuInitDirect = sym("hello_tty_gpu_init")
+        fnGpuSurfaceCreateDirect = sym("hello_tty_gpu_surface_create")
+        fnGpuSurfaceDestroyDirect = sym("hello_tty_gpu_surface_destroy")
     }
 
     // MARK: - Public API
@@ -388,11 +487,43 @@ class MoonBitBridge {
 
     // MARK: - Input Classification (MoonBit SoT)
 
-    enum KeyClassification: Int32 {
-        case directToPty = 0
-        case forwardToIme = 1
-        case clipboardCopy = 2
-        case clipboardPaste = 3
+    enum KeyClassification {
+        case directToPty
+        case forwardToIme
+        case clipboardCopy
+        case clipboardPaste
+        case splitRight
+        case splitDown
+        case nextSplit
+        case prevSplit
+        case newTab
+        case closePanel
+        case nextTab
+        case prevTab
+        case gotoTab(Int)          // 0-based index, -1 = last tab
+        case focusDirection(Int32) // 0=up, 1=down, 2=left, 3=right
+
+        static func from(rawValue: Int32) -> KeyClassification {
+            switch rawValue {
+            case 0: return .directToPty
+            case 1: return .forwardToIme
+            case 2: return .clipboardCopy
+            case 3: return .clipboardPaste
+            case 10: return .splitRight
+            case 11: return .splitDown
+            case 12: return .nextSplit
+            case 13: return .prevSplit
+            case 14: return .newTab
+            case 15: return .closePanel
+            case 16: return .nextTab
+            case 17: return .prevTab
+            // GotoTab: 19 = last tab (-1), 20..27 = tab 0..7
+            case 19: return .gotoTab(-1)
+            case 20...27: return .gotoTab(Int(rawValue - 20))
+            case 30...33: return .focusDirection(rawValue - 30)
+            default: return .forwardToIme
+            }
+        }
     }
 
     /// Classify a key event — delegates to MoonBit input module (SoT).
@@ -405,7 +536,7 @@ class MoonBitBridge {
                 }
             }
         }
-        return KeyClassification(rawValue: result) ?? .forwardToIme
+        return KeyClassification.from(rawValue: result)
     }
 
     // MARK: - Session Management (MoonBit SoT)
@@ -479,6 +610,343 @@ class MoonBitBridge {
         return fn()
     }
 
+    // MARK: - Tab & Panel Management (Layout-aware, MoonBit SoT)
+
+    struct CreateTabResult {
+        let tabId: Int32
+        let panelId: Int32
+        let sessionId: Int32
+        let masterFd: Int32
+    }
+
+    /// Create a new tab with a single panel.
+    func createTab(rows: Int = 24, cols: Int = 80) -> CreateTabResult? {
+        guard let fn = fnCreateTab else { return nil }
+        let ptr = "\(rows)".withCString { r in
+            "\(cols)".withCString { c in fn(r, c) }
+        }
+        guard let ptr = ptr else { return nil }
+        defer { fnFreeString?(ptr) }
+        let jsonStr = String(cString: ptr)
+
+        guard let data = jsonStr.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tabId = obj["tab_id"] as? Int,
+              let panelId = obj["panel_id"] as? Int,
+              let sessionId = obj["session_id"] as? Int,
+              let fd = obj["fd"] as? Int
+        else { return nil }
+
+        return CreateTabResult(tabId: Int32(tabId), panelId: Int32(panelId),
+                               sessionId: Int32(sessionId), masterFd: Int32(fd))
+    }
+
+    /// Close a tab and all its panels/sessions.
+    func closeTab(id: Int32) {
+        guard let fn = fnCloseTab else { return }
+        _ = "\(id)".withCString { fn($0) }
+    }
+
+    /// Switch to a tab by ID.
+    func switchTab(id: Int32) -> Bool {
+        guard let fn = fnSwitchTab else { return false }
+        return "\(id)".withCString { fn($0) } == 0
+    }
+
+    /// Switch to next tab.
+    func nextTab() -> Bool {
+        guard let fn = fnNextTab else { return false }
+        return fn() == 0
+    }
+
+    /// Switch to previous tab.
+    func prevTab() -> Bool {
+        guard let fn = fnPrevTab else { return false }
+        return fn() == 0
+    }
+
+    struct TabInfo {
+        let id: Int
+        let title: String
+        let isActive: Bool
+    }
+
+    /// List all tabs.
+    func listTabs() -> [TabInfo] {
+        guard let fn = fnListTabs else { return [] }
+        guard let ptr = fn() else { return [] }
+        defer { fnFreeString?(ptr) }
+        let jsonStr = String(cString: ptr)
+
+        guard let data = jsonStr.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else { return [] }
+
+        return arr.compactMap { obj in
+            guard let id = obj["id"] as? Int,
+                  let title = obj["title"] as? String,
+                  let active = obj["active"] as? Bool
+            else { return nil }
+            return TabInfo(id: id, title: title, isActive: active)
+        }
+    }
+
+    struct SplitPanelResult {
+        let panelId: Int32
+        let sessionId: Int32
+        let masterFd: Int32
+        let existingRows: Int
+        let existingCols: Int
+    }
+
+    /// Split a panel. direction: 0=vertical (left/right), 1=horizontal (top/bottom).
+    func splitPanel(panelId: Int32, direction: Int32) -> SplitPanelResult? {
+        guard let fn = fnSplitPanel else { return nil }
+        let ptr = "\(panelId)".withCString { p in
+            "\(direction)".withCString { d in fn(p, d) }
+        }
+        guard let ptr = ptr else { return nil }
+        defer { fnFreeString?(ptr) }
+        let jsonStr = String(cString: ptr)
+
+        guard let data = jsonStr.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let pid = obj["panel_id"] as? Int,
+              let sid = obj["session_id"] as? Int,
+              let fd = obj["fd"] as? Int,
+              let er = obj["existing_rows"] as? Int,
+              let ec = obj["existing_cols"] as? Int
+        else { return nil }
+
+        return SplitPanelResult(panelId: Int32(pid), sessionId: Int32(sid),
+                                masterFd: Int32(fd), existingRows: er, existingCols: ec)
+    }
+
+    /// Close a panel. Returns new focused session_id, or -1 if tab was closed.
+    func closePanel(panelId: Int32) -> Int32 {
+        guard let fn = fnClosePanel else { return -1 }
+        return "\(panelId)".withCString { fn($0) }
+    }
+
+    /// Focus a panel by ID.
+    func focusPanel(panelId: Int32) -> Bool {
+        guard let fn = fnFocusPanel else { return false }
+        return "\(panelId)".withCString { fn($0) } == 0
+    }
+
+    /// Focus panel by DFS index (0-based).
+    func focusPanelByIndex(_ index: Int32) -> Bool {
+        guard let fn = fnFocusPanelByIndex else { return false }
+        return "\(index)".withCString { fn($0) } == 0
+    }
+
+    /// Focus neighboring panel. 0=up, 1=down, 2=left, 3=right.
+    func focusDirection(_ direction: Int32) -> Bool {
+        guard let fn = fnFocusDirection else { return false }
+        return "\(direction)".withCString { fn($0) } == 0
+    }
+
+    /// Get the layout tree of the active tab as JSON string.
+    func getLayout() -> String? {
+        guard let fn = fnGetLayout else { return nil }
+        guard let ptr = fn() else { return nil }
+        defer { fnFreeString?(ptr) }
+        return String(cString: ptr)
+    }
+
+    struct PanelInfo {
+        let panelId: Int32
+        let sessionId: Int32
+        let rows: Int
+        let cols: Int
+        let focused: Bool
+    }
+
+    /// Get all panels in the active tab.
+    func getAllPanels() -> [PanelInfo] {
+        guard let fn = fnGetAllPanels else { return [] }
+        guard let ptr = fn() else { return [] }
+        defer { fnFreeString?(ptr) }
+        let jsonStr = String(cString: ptr)
+
+        guard let data = jsonStr.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else { return [] }
+
+        return arr.compactMap { obj in
+            guard let pid = obj["panel_id"] as? Int,
+                  let sid = obj["session_id"] as? Int,
+                  let rows = obj["rows"] as? Int,
+                  let cols = obj["cols"] as? Int,
+                  let focused = obj["focused"] as? Bool
+            else { return nil }
+            return PanelInfo(panelId: Int32(pid), sessionId: Int32(sid),
+                             rows: rows, cols: cols, focused: focused)
+        }
+    }
+
+    /// Get the focused panel ID (-1 if none).
+    func getFocusedPanelId() -> Int32 {
+        guard let fn = fnGetFocusedPanelId else { return -1 }
+        return fn()
+    }
+
+    // MARK: - Session-Targeted Operations
+
+    /// Feed PTY output into a specific session.
+    func processOutputFor(sessionId: Int32, data: String) -> Bool {
+        guard let fn = fnProcessOutputFor else { return false }
+        let result = "\(sessionId)".withCString { s in
+            data.withCString { d in fn(s, d) }
+        }
+        return result == 0
+    }
+
+    /// Get the grid of a specific session.
+    func getGridFor(sessionId: Int32) -> TerminalGrid? {
+        guard let fn = fnGetGridFor else { return nil }
+        let ptr = "\(sessionId)".withCString { fn($0) }
+        guard let ptr = ptr else { return nil }
+        defer { fnFreeString?(ptr) }
+        let jsonStr = String(cString: ptr)
+        return TerminalGrid.fromJSON(jsonStr)
+    }
+
+    /// Handle a key on a specific session.
+    func handleKeyFor(sessionId: Int32, keyCode: Int, modifiers: Int) -> String? {
+        guard let fn = fnHandleKeyFor else { return nil }
+        let resultPtr = "\(sessionId)".withCString { s in
+            "\(keyCode)".withCString { k in
+                "\(modifiers)".withCString { m in fn(s, k, m) }
+            }
+        }
+        guard let ptr = resultPtr else { return nil }
+        defer { fnFreeString?(ptr) }
+        return String(cString: ptr)
+    }
+
+    /// Resize a specific session's terminal.
+    func resizeSession(sessionId: Int32, rows: Int, cols: Int) -> Bool {
+        guard let fn = fnResizeSession else { return false }
+        let result = "\(sessionId)".withCString { s in
+            "\(rows)".withCString { r in
+                "\(cols)".withCString { c in fn(s, r, c) }
+            }
+        }
+        return result == 0
+    }
+
+    // MARK: - Layout Resize (MoonBit SoT)
+
+    private typealias ResizeLayoutFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
+    private var fnResizeLayout: ResizeLayoutFn?
+    private var fnResizeLayoutPx: ResizeLayoutFn?
+
+    struct PanelDimensions {
+        let panelId: Int32
+        let sessionId: Int32
+        let rows: Int
+        let cols: Int
+    }
+
+    /// Resize the layout using grid dimensions.
+    func resizeLayout(totalRows: Int, totalCols: Int) -> [PanelDimensions] {
+        guard let fn = fnResizeLayout else { return [] }
+        let ptr = "\(totalRows)".withCString { r in
+            "\(totalCols)".withCString { c in fn(r, c) }
+        }
+        return parsePanelDimensions(ptr)
+    }
+
+    /// Resize the layout using pixel dimensions.
+    /// MoonBit converts pixels → grid cells using its own cell metrics (SoT).
+    func resizeLayoutPx(widthPx: Int, heightPx: Int) -> [PanelDimensions] {
+        guard let fn = fnResizeLayoutPx else { return [] }
+        let ptr = "\(widthPx)".withCString { w in
+            "\(heightPx)".withCString { h in fn(w, h) }
+        }
+        return parsePanelDimensions(ptr)
+    }
+
+    /// Parse panel dimensions JSON from a C string pointer.
+    private func parsePanelDimensions(_ ptr: UnsafeMutablePointer<CChar>?) -> [PanelDimensions] {
+        guard let ptr = ptr else { return [] }
+        defer { fnFreeString?(ptr) }
+        let jsonStr = String(cString: ptr)
+
+        guard let data = jsonStr.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else { return [] }
+
+        return arr.compactMap { obj in
+            guard let pid = obj["panel_id"] as? Int,
+                  let sid = obj["session_id"] as? Int,
+                  let rows = obj["rows"] as? Int,
+                  let cols = obj["cols"] as? Int
+            else { return nil }
+            return PanelDimensions(panelId: Int32(pid), sessionId: Int32(sid),
+                                  rows: rows, cols: cols)
+        }
+    }
+
+    // MARK: - Coordinate Conversion (MoonBit SoT)
+
+    private typealias PixelToGridFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
+    private var fnPixelToGrid: PixelToGridFn?
+
+    /// Convert pixel coordinates to grid cell (row, col).
+    /// MoonBit uses its own cell metrics (SoT) for the conversion.
+    func pixelToGrid(xPx: Int, yPx: Int, viewHeightPx: Int) -> (row: Int, col: Int) {
+        guard let fn = fnPixelToGrid else { return (0, 0) }
+        let ptr = "\(xPx)".withCString { x in
+            "\(yPx)".withCString { y in
+                "\(viewHeightPx)".withCString { h in fn(x, y, h) }
+            }
+        }
+        guard let ptr = ptr else { return (0, 0) }
+        defer { fnFreeString?(ptr) }
+        let result = String(cString: ptr)
+        let parts = result.split(separator: ",")
+        guard parts.count == 2,
+              let row = Int(parts[0]),
+              let col = Int(parts[1])
+        else { return (0, 0) }
+        return (row, col)
+    }
+
+    // MARK: - Panel Resize Notification
+
+    private typealias NotifyPanelResizeFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
+    private var fnNotifyPanelResize: NotifyPanelResizeFn?
+
+    /// Notify MoonBit that a divider moved, giving the first child's new pixel size.
+    /// Returns updated panel dimensions (same as resizeLayout).
+    func notifyPanelResize(panelId: Int32, firstSizePx: Int, totalSizePx: Int) -> [PanelDimensions] {
+        guard let fn = fnNotifyPanelResize else { return [] }
+        let ptr = "\(panelId)".withCString { p in
+            "\(firstSizePx)".withCString { f in
+                "\(totalSizePx)".withCString { t in fn(p, f, t) }
+            }
+        }
+        guard let ptr = ptr else { return [] }
+        defer { fnFreeString?(ptr) }
+        let jsonStr = String(cString: ptr)
+
+        guard let data = jsonStr.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else { return [] }
+
+        return arr.compactMap { obj in
+            guard let pid = obj["panel_id"] as? Int,
+                  let sid = obj["session_id"] as? Int,
+                  let rows = obj["rows"] as? Int,
+                  let cols = obj["cols"] as? Int
+            else { return nil }
+            return PanelDimensions(panelId: Int32(pid), sessionId: Int32(sid),
+                                  rows: rows, cols: cols)
+        }
+    }
+
     // MARK: - Theme (MoonBit SoT)
 
     struct ThemeInfo {
@@ -518,6 +986,42 @@ class MoonBitBridge {
         )
     }
 
+    struct CellMetrics {
+        let cellWidth: CGFloat
+        let cellHeight: CGFloat
+        let dpiScale: CGFloat
+        /// Font size in points (for CPU fallback rendering).
+        let fontSize: CGFloat
+    }
+
+    /// Get cell metrics from MoonBit's GPU font engine.
+    /// This is the SoT for pixel↔grid conversion — Swift must NOT compute
+    /// cell sizes from its own NSFont. The GPU renderer uses these exact
+    /// values for rendering, so layout calculations must match.
+    func getCellMetrics() -> CellMetrics? {
+        guard let fn = fnGetCellMetrics else { return nil }
+        guard let ptr = fn() else { return nil }
+        defer { fnFreeString?(ptr) }
+        let jsonStr = String(cString: ptr)
+
+        guard let data = jsonStr.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+
+        guard let cw = obj["cell_width"] as? Int,
+              let ch = obj["cell_height"] as? Int
+        else { return nil }
+
+        let dpi = obj["dpi_scale"] as? Double ?? 2.0
+        let fontSize = obj["font_size"] as? Int ?? 14
+        return CellMetrics(
+            cellWidth: CGFloat(cw),
+            cellHeight: CGFloat(ch),
+            dpiScale: CGFloat(dpi),
+            fontSize: CGFloat(fontSize)
+        )
+    }
+
     // MARK: - GPU Rendering (MoonBit Pipeline)
     //
     // Font rasterization and glyph atlas management are handled entirely
@@ -544,11 +1048,83 @@ class MoonBitBridge {
         } == 0
     }
 
-    /// Render the current terminal state to the GPU.
+    /// Create a GPU surface for a session's panel.
+    ///
+    /// Two-step process:
+    ///   1. Create wgpu surface via direct C FFI (handles 64-bit CAMetalLayer pointer)
+    ///   2. Register session→surface mapping in MoonBit bridge
+    ///
+    /// This split is necessary because MoonBit's Int is 32-bit and cannot hold
+    /// a 64-bit pointer. The C FFI handles the pointer, MoonBit handles the mapping.
+    func gpuSurfaceCreate(sessionId: Int32, metalLayer: UnsafeMutableRawPointer, width: Int, height: Int) -> Int32 {
+        // Step 1: Create wgpu surface (direct C FFI, handles uint64_t pointer)
+        guard let fnDirect = fnGpuSurfaceCreateDirect else { return -1 }
+        let handle = UInt64(UInt(bitPattern: metalLayer))
+        let surfaceId = fnDirect(handle, Int32(width), Int32(height))
+        if surfaceId < 0 { return -1 }
+
+        // Step 2: Register session→surface mapping in MoonBit bridge
+        if let fn = fnGpuRegisterSurface {
+            _ = "\(sessionId)".withCString { s in
+                "\(surfaceId)".withCString { sid in fn(s, sid) }
+            }
+        }
+        return surfaceId
+    }
+
+    /// Destroy a session's GPU surface (legacy — clears surface_map entry).
+    func gpuSurfaceDestroy(sessionId: Int32) {
+        guard let fn = fnGpuSurfaceDestroyBridge else { return }
+        _ = "\(sessionId)".withCString { fn($0) }
+    }
+
+    /// Destroy a GPU surface by its C-level surface_id (direct FFI).
+    private var fnGpuSurfaceDestroyDirect: (@convention(c) (Int32) -> Void)?
+
+    func gpuSurfaceDestroyById(surfaceId: Int32) {
+        fnGpuSurfaceDestroyDirect?(surfaceId)
+    }
+
+    /// Conditionally remove session from surface_map only if the current
+    /// mapping matches the expected surfaceId. Prevents a stale view
+    /// from removing a mapping already overwritten by a newer view.
+    func gpuSurfaceUnregisterIfMatches(sessionId: Int32, expectedSurfaceId: Int32) {
+        // The next gpuRegisterSurface for this session will overwrite anyway.
+        // Only call the bridge destroy if the session's current surface matches.
+        // For simplicity: don't touch surface_map here — the C surface is
+        // already destroyed, and the map will be overwritten by the new view.
+    }
+
+    /// Re-register an existing surface for a (possibly different) session.
+    /// Used on tab/panel switch to rebind without recreating the wgpu surface.
+    func gpuRegisterSurface(sessionId: Int32, surfaceId: Int32) {
+        guard let fn = fnGpuRegisterSurface else { return }
+        _ = "\(sessionId)".withCString { s in
+            "\(surfaceId)".withCString { sid in fn(s, sid) }
+        }
+    }
+
+    /// Resize a session's GPU surface.
+    func gpuSurfaceResize(sessionId: Int32, width: Int, height: Int) {
+        guard let fn = fnGpuSurfaceResizeBridge else { return }
+        _ = "\(sessionId)".withCString { s in
+            "\(width)".withCString { w in
+                "\(height)".withCString { h in fn(s, w, h) }
+            }
+        }
+    }
+
+    /// Render the current terminal state to the GPU (active session).
     /// All rendering logic runs in MoonBit — Swift just calls this once per frame.
     func renderFrame() -> Bool {
         guard let fn = fnRenderFrame else { return false }
         return fn() == 0
+    }
+
+    /// Render a specific session's terminal state to the GPU.
+    func renderFrameFor(sessionId: Int32) -> Bool {
+        guard let fn = fnRenderFrameFor else { return false }
+        return "\(sessionId)".withCString { fn($0) } == 0
     }
 
     /// Resize GPU surface via MoonBit bridge.

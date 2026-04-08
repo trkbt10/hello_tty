@@ -1,9 +1,11 @@
 // GPU rendering FFI — C API for the MoonBit renderer backend.
 //
-// This layer provides:
-//   1. wgpu device/surface/pipeline lifecycle (Metal on macOS, Vulkan on Linux)
-//   2. Font rasterization (CoreText on macOS, FreeType on Linux)
-//   3. Per-frame draw calls (upload vertices, draw, present)
+// Multi-surface architecture:
+//   - Device-level resources (instance, adapter, device, queue, pipelines, atlas)
+//     are shared across all surfaces and initialized once.
+//   - Each surface (one per terminal panel) has its own swapchain, framebuffer,
+//     and per-frame state.
+//   - surface_id is an opaque integer handle returned by gpu_surface_create().
 //
 // The MoonBit side builds RenderCommands; this C layer executes them on the GPU.
 // Backend: wgpu-native (WebGPU abstraction over Metal/Vulkan/DX12).
@@ -17,21 +19,31 @@
 extern "C" {
 #endif
 
-// ---------- GPU lifecycle ----------
+// ---------- Device lifecycle (global, once) ----------
 
-// Initialize the GPU backend (wgpu instance, device, surface).
-// surface_handle: platform-specific surface (CAMetalLayer* cast to uint64_t on macOS, or 0 for headless).
-// width, height: initial framebuffer size in pixels.
+// Initialize the GPU device (wgpu instance, adapter, device, queue, pipelines).
+// Does NOT create a surface — call gpu_surface_create() for that.
 // Returns 0 on success, -1 on failure.
-int hello_tty_gpu_init(uint64_t surface_handle, int width, int height);
+int hello_tty_gpu_init_device(void);
 
-// Resize the swapchain after a window resize.
-int hello_tty_gpu_resize(int width, int height);
-
-// Destroy all GPU resources and shut down.
+// Destroy all GPU resources (device + all surfaces) and shut down.
 void hello_tty_gpu_shutdown(void);
 
-// ---------- Texture atlas ----------
+// ---------- Surface lifecycle (per panel) ----------
+
+// Create a new GPU surface from a platform-specific handle.
+// surface_handle: CAMetalLayer* cast to uint64_t on macOS.
+// width, height: initial framebuffer size in pixels.
+// Returns surface_id (>= 0) on success, -1 on failure.
+int hello_tty_gpu_surface_create(uint64_t surface_handle, int width, int height);
+
+// Destroy a surface by ID.
+void hello_tty_gpu_surface_destroy(int surface_id);
+
+// Resize a surface's swapchain after a view resize.
+int hello_tty_gpu_surface_resize(int surface_id, int width, int height);
+
+// ---------- Texture atlas (shared) ----------
 
 // Create or recreate the glyph atlas texture on the GPU.
 // width, height: atlas dimensions in pixels.
@@ -45,36 +57,38 @@ int hello_tty_gpu_atlas_upload(
     int x, int y, int region_w, int region_h,
     const uint8_t *data, int data_len);
 
-// Font rasterization is in src/font/ffi/c_stub/ (font_ffi.h).
-// Renderer does NOT own font — it consumes font via MoonBit @font package.
+// ---------- Per-frame rendering (on a specific surface) ----------
 
-// ---------- Per-frame rendering ----------
+// Set the clear color for the next frame_begin.
+void hello_tty_gpu_frame_clear(int surface_id, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 
-// Begin a new frame. Acquires the next swapchain image.
+// Begin a new frame on a surface. Acquires the next swapchain image.
 // Returns 0 on success, -1 if swapchain needs recreation.
-int hello_tty_gpu_frame_begin(void);
+int hello_tty_gpu_frame_begin(int surface_id);
 
-// Clear the framebuffer with the given color.
-void hello_tty_gpu_frame_clear(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
-
-// Upload cell quad vertex data for drawing.
+// Upload cell quad vertex data for drawing on a surface.
 // vertices: packed float array [x, y, u, v, fg_r, fg_g, fg_b, fg_a, bg_r, bg_g, bg_b, bg_a] per vertex.
 // vertex_count: number of vertices (must be multiple of 6 for quads: 2 triangles each).
 // Returns 0 on success.
-int hello_tty_gpu_draw_cells(const float *vertices, int vertex_count);
+int hello_tty_gpu_draw_cells(int surface_id, const float *vertices, int vertex_count);
 
-// Draw the cursor quad.
+// Draw the cursor quad on a surface.
 // x, y, w, h: pixel position and size.
 // r, g, b, a: cursor color.
 // style: 0=block, 1=underline, 2=bar.
-void hello_tty_gpu_draw_cursor(
+void hello_tty_gpu_draw_cursor(int surface_id,
     float x, float y, float w, float h,
     uint8_t r, uint8_t g, uint8_t b, uint8_t a,
     int style);
 
-// End the frame and present. Submits command buffer and presents swapchain image.
+// End the frame on a surface and present. Submits command buffer and presents swapchain image.
 // Returns 0 on success, -1 if swapchain needs recreation.
-int hello_tty_gpu_frame_end(void);
+int hello_tty_gpu_frame_end(int surface_id);
+
+// ---------- Legacy single-surface API (deprecated, wraps surface_id=0) ----------
+
+int hello_tty_gpu_init(uint64_t surface_handle, int width, int height);
+int hello_tty_gpu_resize(int width, int height);
 
 #ifdef __cplusplus
 }

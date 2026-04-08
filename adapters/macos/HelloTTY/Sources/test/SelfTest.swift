@@ -46,7 +46,17 @@ class SelfTestRunner {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     self.test9_tabSwitchResult()
                     self.test10_underlineCheck()
-                    self.reportAndExit()
+                    self.test11_panelSplit()
+
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        self.test12_panelSplitResult()
+                        self.test13_signalCtrlC()
+
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            self.test14_signalCtrlCResult()
+                            self.reportAndExit()
+                        }
+                    }
                 }
             }
         }
@@ -74,7 +84,7 @@ class SelfTestRunner {
             fail("test2_gridHasContent: No selected tab")
             return
         }
-        guard let grid = tab.state.grid else {
+        guard let grid = tab.state!.forceRefreshGrid() else {
             fail("test2_gridHasContent: Grid is nil")
             return
         }
@@ -115,29 +125,27 @@ class SelfTestRunner {
             fail("test4_resize: No selected tab")
             return
         }
-        preResizeRows = tab.state.currentRows
-        preResizeCols = tab.state.currentCols
+        preResizeRows = tab.state!.currentRows
+        preResizeCols = tab.state!.currentCols
 
         guard let window = NSApp.windows.first else {
             fail("test4_resize: No window")
             return
         }
 
-        // Resize the window
-        let newFrame = NSRect(x: window.frame.origin.x, y: window.frame.origin.y,
-                              width: 1024, height: 768)
+        // Choose a window size distinctly different from the current one.
+        // We pick something far from any common default.
+        let currentFrame = window.frame
+        let targetW: CGFloat = abs(currentFrame.width - 500) > 100 ? 500 : 850
+        let targetH: CGFloat = abs(currentFrame.height - 400) > 100 ? 400 : 680
+        let newFrame = NSRect(x: currentFrame.origin.x, y: currentFrame.origin.y,
+                              width: targetW, height: targetH)
         window.setFrame(newFrame, display: true, animate: false)
-        window.contentView?.layoutSubtreeIfNeeded()
 
-        // Also notify the terminal state directly.
-        // SwiftUI's NSViewRepresentable layout propagation is async and may not
-        // complete within the test's timing window. The resize logic itself
-        // (MoonBit grid resize + PTY TIOCSWINSZ) is what we're testing here.
-        let newCols = max(1, Int(1024.0 / tab.state.cellWidth))
-        let newRows = max(1, Int(768.0 / tab.state.cellHeight))
-        tab.state.resize(rows: newRows, cols: newCols)
-
-        pass("test4_resize: Resized to \(newRows)x\(newCols) (was \(preResizeRows)x\(preResizeCols))")
+        // Let SwiftUI propagate the new layout (setFrameSize → recalculateGridSize → resize).
+        // We do NOT call state.resize manually — that would race with SwiftUI's layout.
+        // The test5 check runs after a 1-second delay to allow propagation.
+        pass("test4_resize: Window resized to \(Int(targetW))x\(Int(targetH)) (was \(Int(currentFrame.width))x\(Int(currentFrame.height)), grid was \(preResizeRows)x\(preResizeCols))")
     }
 
     // MARK: - Test 5: Resize result
@@ -147,8 +155,8 @@ class SelfTestRunner {
             fail("test5_resizeResult: No selected tab")
             return
         }
-        let newRows = tab.state.currentRows
-        let newCols = tab.state.currentCols
+        let newRows = tab.state!.currentRows
+        let newCols = tab.state!.currentCols
 
         if newRows == preResizeRows && newCols == preResizeCols {
             fail("test5_resizeResult: Grid did NOT resize (still \(newRows)x\(newCols))")
@@ -177,10 +185,10 @@ class SelfTestRunner {
             fail("test6_keyboardInput: No selected tab")
             return
         }
-        cellCountBefore = tab.state.grid?.cells.count ?? 0
+        cellCountBefore = tab.state!.forceRefreshGrid()?.cells.count ?? 0
 
         // Send "echo test123" + Return
-        tab.state.sendText("echo test123\r")
+        tab.state!.sendText("echo test123\r")
         pass("test6_keyboardInput: Sent 'echo test123\\r'")
     }
 
@@ -191,7 +199,7 @@ class SelfTestRunner {
             fail("test7_keyboardInputResult: No selected tab")
             return
         }
-        let cellCountAfter = tab.state.grid?.cells.count ?? 0
+        let cellCountAfter = tab.state!.forceRefreshGrid()?.cells.count ?? 0
 
         if cellCountAfter <= cellCountBefore {
             fail("test7_keyboardInputResult: Cell count did not increase (\(cellCountBefore) -> \(cellCountAfter))")
@@ -225,9 +233,9 @@ class SelfTestRunner {
             return
         }
 
-        // Switch back to first tab
+        // Switch back to first tab (must use selectTab to sync MoonBit state)
         if let firstTab = tabManager.tabs.first {
-            tabManager.selectedTabId = firstTab.id
+            tabManager.selectTab(firstTab)
         }
         pass("test8_tabManagement: Created tab, switched back to first")
     }
@@ -241,7 +249,7 @@ class SelfTestRunner {
         }
 
         // The first tab should still have its grid
-        if let grid = tab.state.grid {
+        if let grid = tab.state!.forceRefreshGrid() {
             if grid.cells.isEmpty {
                 fail("test9_tabSwitchResult: First tab grid is EMPTY after switching back")
             } else {
@@ -260,7 +268,7 @@ class SelfTestRunner {
 
     private func test10_underlineCheck() {
         guard let tab = tabManager.selectedTab,
-              let grid = tab.state.grid
+              let grid = tab.state!.forceRefreshGrid()
         else {
             fail("test10_underlineCheck: No grid")
             return
@@ -274,6 +282,138 @@ class SelfTestRunner {
             fail("test10_underlineCheck: \(Int(underlineRatio * 100))% of cells have underline! (\(underlinedCells)/\(totalCells)) — attrs sample: \(grid.cells.prefix(5).map { $0.attrs })")
         } else {
             pass("test10_underlineCheck: \(underlinedCells)/\(totalCells) underlined (\(Int(underlineRatio * 100))%)")
+        }
+    }
+
+    // MARK: - Test 11: Panel split
+
+    private var preSplitPanelCount: Int = 0
+
+    private func test11_panelSplit() {
+        guard let tab = tabManager.selectedTab else {
+            fail("test11_panelSplit: No selected tab")
+            return
+        }
+        preSplitPanelCount = tab.panels.count
+
+        // Split the focused panel vertically (Cmd+\)
+        tabManager.splitFocusedPanel(direction: 0) // 0 = vertical
+
+        if tab.panels.count == preSplitPanelCount + 1 {
+            pass("test11_panelSplit: Split created, now \(tab.panels.count) panels")
+        } else {
+            fail("test11_panelSplit: Panel count did not increase (\(preSplitPanelCount) -> \(tab.panels.count))")
+        }
+    }
+
+    // MARK: - Test 12: Panel split result (verify both panels have content)
+
+    private func test12_panelSplitResult() {
+        guard let tab = tabManager.selectedTab else {
+            fail("test12_panelSplitResult: No selected tab")
+            return
+        }
+
+        // Check that all panels have a running PTY
+        var allConnected = true
+        for panel in tab.panels {
+            if !panel.state.pty.isConnected {
+                allConnected = false
+                fail("test12_panelSplitResult: Panel \(panel.panelId) PTY not connected")
+            }
+        }
+
+        // Check ALL panels have grid content (not just the focused one)
+        for panel in tab.panels {
+            if let grid = panel.state.forceRefreshGrid() {
+                let nonEmpty = grid.cells.filter { $0.char != " " && $0.char != "\0" }.count
+                if nonEmpty > 0 {
+                    pass("test12_panelSplitResult: Panel \(panel.panelId) (session \(panel.sessionId), focused=\(panel.isFocused)) has \(grid.cells.count) cells (\(nonEmpty) non-empty)")
+                } else {
+                    fail("test12_panelSplitResult: Panel \(panel.panelId) (session \(panel.sessionId), focused=\(panel.isFocused)) grid has \(grid.cells.count) cells but ALL EMPTY")
+                }
+            } else {
+                fail("test12_panelSplitResult: Panel \(panel.panelId) (session \(panel.sessionId)) grid is nil")
+            }
+        }
+
+        // Screenshot
+        if let contentView = NSApp.windows.first?.contentView {
+            saveScreenshot(captureView(contentView), name: "05_after_split")
+        }
+    }
+
+    // MARK: - Test 13: Signal — send Ctrl+C to interrupt a running process
+
+    private func test13_signalCtrlC() {
+        guard let tab = tabManager.selectedTab,
+              let state = tab.state,
+              state.pty.isConnected
+        else {
+            fail("test13_signalCtrlC: No connected PTY")
+            return
+        }
+
+        // Start a long-running command, then send Ctrl+C
+        // "sleep 60" should be killed by SIGINT when we send 0x03
+        state.sendText("sleep 60\r")
+
+        // Give the command time to start, then send Ctrl+C
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            // Send Ctrl+C (0x03) the same way InputHandler does:
+            // classify_key → DirectToPty → sendKey → translate_key_input → PTY write
+            state.sendKey(keyCode: 0x03, modifiers: 2) // 2 = mod_ctrl
+            self.pass("test13_signalCtrlC: Sent Ctrl+C to PTY")
+        }
+    }
+
+    // MARK: - Test 14: Verify Ctrl+C actually interrupted the process
+
+    private func test14_signalCtrlCResult() {
+        // After Ctrl+C, the shell should show a new prompt.
+        // "sleep 60" should NOT still be running — if it is,
+        // the controlling terminal wasn't set up correctly.
+
+        // Check that grid contains a shell prompt ($ or %) on a recent line,
+        // indicating the shell regained control after the signal.
+        guard let tab = tabManager.selectedTab,
+              let grid = tab.state?.forceRefreshGrid()
+        else {
+            fail("test14_signalCtrlCResult: No grid")
+            return
+        }
+
+        // Build row strings
+        var lastNonEmptyRow = ""
+        var promptFound = false
+        for row in stride(from: grid.rows - 1, through: 0, by: -1) {
+            var line = ""
+            for cell in grid.cells where cell.row == row {
+                line.append(cell.char)
+            }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { continue }
+            if lastNonEmptyRow.isEmpty { lastNonEmptyRow = trimmed }
+            // Shell prompts typically end with $, %, >, or #
+            if trimmed.hasSuffix("$") || trimmed.hasSuffix("%") ||
+               trimmed.hasSuffix(">") || trimmed.hasSuffix("#") ||
+               trimmed.contains("$ ") || trimmed.contains("% ") {
+                promptFound = true
+                break
+            }
+            // Also check for ^C in output (signal echo)
+            if trimmed.contains("^C") {
+                promptFound = true
+                break
+            }
+            // Only check the last few non-empty rows
+            if row < grid.rows - 5 { break }
+        }
+
+        if promptFound {
+            pass("test14_signalCtrlCResult: Shell prompt found after Ctrl+C (signal delivered)")
+        } else {
+            fail("test14_signalCtrlCResult: No shell prompt found after Ctrl+C — signal may not have been delivered. Last row: \(lastNonEmptyRow)")
         }
     }
 
@@ -384,7 +524,7 @@ class SelfTestRunner {
 
     private func gridContainsText(_ text: String) -> Bool {
         guard let tab = tabManager.selectedTab,
-              let grid = tab.state.grid
+              let grid = tab.state!.forceRefreshGrid()
         else { return false }
 
         // Build rows as strings

@@ -46,6 +46,7 @@ struct VisualEffectBackground: NSViewRepresentable {
 /// whether the wgpu GPU backend is available in the dylib.
 struct TerminalView: NSViewRepresentable {
     @ObservedObject var state: TerminalState
+    var tabManager: TabManager?
 
     func makeNSView(context: Context) -> NSView {
         let view: TerminalBaseView
@@ -54,6 +55,7 @@ struct TerminalView: NSViewRepresentable {
         } else {
             view = TerminalNSView()
         }
+        view.tabManager = tabManager
         view.terminalState = state
         state.terminalView = view
         return view
@@ -61,165 +63,161 @@ struct TerminalView: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         guard let baseView = nsView as? TerminalBaseView else { return }
+        let stateChanged = baseView.terminalState !== state
+        baseView.tabManager = tabManager
         baseView.terminalState = state
         state.terminalView = baseView
+        // If the state changed (different panel), rebind the existing GPU
+        // surface to the new session — no surface destruction needed.
+        if stateChanged, let gpuView = baseView as? TerminalGPUView {
+            gpuView.rebindSurface()
+        }
     }
 }
 
 // MARK: - TerminalState
 
-/// Terminal state — bridges MoonBit core + PTY session to SwiftUI.
+/// Terminal state coordinator — thin layer bridging domain objects to SwiftUI.
+///
+/// Domain objects:
+///   - PtyConnection: PTY I/O loop, read/write, fd ownership
+///   - TerminalGridCache: grid fetch/cache/differential-update, cursor
+///
+/// TerminalState itself only handles:
+///   - SwiftUI @Published properties (title)
+///   - Font metrics (cell size for layout calculations)
+///   - View notification (refresh → needsDisplay / setNeedsRender)
+///   - Coordinating between PTY output and grid updates
 class TerminalState: ObservableObject {
     @Published var title: String = "hello_tty"
 
-    /// Grid is fetched on-demand by the renderer, not eagerly on every refresh.
-    /// CPU renderer calls `fetchGrid()` in its `draw()`.
-    /// GPU renderer never needs it (MoonBit renders directly via wgpu).
-    var grid: TerminalGrid?
-
     let bridge = MoonBitBridge.shared
     let theme: TerminalTheme
+    let sessionId: Int32
 
-    /// Cell metrics computed from the font via CoreText for pixel-perfect rendering.
+    /// PTY connection — owns the fd and I/O loop.
+    let pty = PtyConnection()
+
+    /// Grid cache — owns the grid data and differential update logic.
+    let gridCache: TerminalGridCache
+
+    /// Cell metrics — SoT is MoonBit's FontEngine (via getCellMetrics).
+    /// Initial values are fallbacks until GPU init provides real metrics.
+    /// These represent the cell size in logical points (not pixels).
+    /// The GPU renderer uses these same values * dpi_scale for pixel rendering.
     var cellWidth: CGFloat = 8
     var cellHeight: CGFloat = 16
+    var dpiScale: CGFloat = 2.0
+    /// Font for CPU fallback rendering (TerminalNSView).
+    /// Sized to match MoonBit's cell metrics.
     var font: NSFont
 
-    private var masterFd: Int32 = -1
-    private var ptyThread: Thread?
-    private var running = false
-
-    /// Current grid dimensions (tracked to avoid duplicate resize calls).
-    private(set) var currentRows: Int = 24
-    private(set) var currentCols: Int = 80
-
-    init(theme: TerminalTheme = .fallback) {
-        self.theme = theme
-        font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-
-        let ctFont = font as CTFont
-        var chars: [UniChar] = [UniChar(0x4D)] // 'M'
-        var glyphs: [CGGlyph] = [0]
-        CTFontGetGlyphsForCharacters(ctFont, &chars, &glyphs, 1)
-        var advance = CGSize.zero
-        CTFontGetAdvancesForGlyphs(ctFont, .horizontal, &glyphs, &advance, 1)
-        cellWidth = advance.width > 0 ? advance.width : 8
-
-        let ascent = CTFontGetAscent(ctFont)
-        let descent = CTFontGetDescent(ctFont)
-        let leading = CTFontGetLeading(ctFont)
-        cellHeight = ceil(ascent + descent + leading)
-    }
-
-    /// Start the PTY I/O read loop with an already-spawned master_fd.
-    /// The PTY was spawned by MoonBit (SessionManager) — Swift only drives I/O.
-    func startPtyLoop(masterFd: Int32) {
-        self.masterFd = masterFd
-        running = true
-        NSLog("hello_tty: PTY loop started, master_fd=%d", masterFd)
-
-        ptyThread = Thread {
-            self.ptyReadLoop()
-        }
-        ptyThread?.name = "hello_tty.pty_reader"
-        ptyThread?.start()
-    }
-
-    /// Stop the PTY I/O loop.
-    func stopPtyLoop() {
-        running = false
-        if masterFd >= 0 {
-            // PTY fd is owned by MoonBit Session — don't close here.
-            // MoonBit's destroy_session handles cleanup.
-            masterFd = -1
-        }
-    }
-
-    /// Whether a main-thread refresh is already scheduled.
-    private var refreshPending = false
-
-    /// Background PTY read loop.
-    /// IMPORTANT: MoonBit's GC is NOT thread-safe. Only pure-C functions
-    /// (ptyPoll, ptyRead) may be called from this background thread.
-    /// Batches rapid consecutive reads into a single main-thread dispatch.
-    private func ptyReadLoop() {
-        let fd = masterFd
-        while running {
-            let pollResult = bridge.ptyPoll(masterFd: fd, timeoutMs: 16)
-            if pollResult > 0 {
-                // Drain all available data before dispatching
-                var accumulated = Data()
-                while true {
-                    guard let data = bridge.ptyRead(masterFd: fd) else {
-                        running = false
-                        break
-                    }
-                    accumulated.append(data)
-                    // Check if more data is immediately available
-                    let moreResult = bridge.ptyPoll(masterFd: fd, timeoutMs: 0)
-                    if moreResult <= 0 { break }
-                }
-                if !running { break }
-                if accumulated.isEmpty { continue }
-
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self, self.running else { return }
-                    if let str = String(data: accumulated, encoding: .utf8) {
-                        _ = self.bridge.processOutput(str)
-                        self.refresh()
-                    }
-                }
-            } else if pollResult == -2 {
-                running = false
-                break
+    /// Attached view (GPU or CPU) — notified on state changes.
+    /// When nil, state changes are buffered (pendingRefresh) so the next
+    /// view attachment triggers an immediate render.
+    weak var terminalView: TerminalBaseView? {
+        didSet {
+            if terminalView != nil && pendingRefresh {
+                pendingRefresh = false
+                notifyView()
             }
         }
-        NSLog("hello_tty: PTY read loop ended")
+    }
+
+    /// Whether a refresh happened while no view was attached.
+    private var pendingRefresh = false
+
+    /// PTY master fd — delegated to PtyConnection.
+    var masterFd: Int32 { pty.masterFd }
+
+    /// Current grid dimensions.
+    var currentRows: Int { gridCache.rows }
+    var currentCols: Int { gridCache.cols }
+
+    // Backward-compatible accessors for code that reads these directly
+    var cursorRow: Int { gridCache.cursorRow }
+    var cursorCol: Int { gridCache.cursorCol }
+    var grid: TerminalGrid? { gridCache.grid }
+    var gridDirty: Bool {
+        get { gridCache.dirty }
+        set { gridCache.dirty = newValue }
+    }
+
+    init(theme: TerminalTheme = .fallback, sessionId: Int32 = -1) {
+        self.theme = theme
+        self.sessionId = sessionId
+        self.gridCache = TerminalGridCache(sessionId: sessionId)
+
+        // Fetch cell metrics from MoonBit (SoT).
+        // getCellMetrics ensures GPU init, so font engine is initialized.
+        // The metrics are in pixel space; divide by dpiScale for logical points.
+        if let metrics = MoonBitBridge.shared.getCellMetrics() {
+            let dpi = metrics.dpiScale > 0 ? metrics.dpiScale : 2.0
+            self.cellWidth = metrics.cellWidth / dpi
+            self.cellHeight = metrics.cellHeight / dpi
+            self.dpiScale = dpi
+        }
+
+        // CPU fallback font — font size comes from MoonBit (SoT).
+        if let metrics = MoonBitBridge.shared.getCellMetrics() {
+            let dpi = metrics.dpiScale > 0 ? metrics.dpiScale : 2.0
+            font = NSFont.monospacedSystemFont(
+                ofSize: metrics.fontSize / dpi, weight: .regular)
+        } else {
+            font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        }
+
+        // Wire PTY output → session processing → grid refresh
+        pty.onOutput = { [weak self] str in
+            guard let self = self else { return }
+            if self.sessionId >= 0 {
+                _ = self.bridge.processOutputFor(sessionId: self.sessionId, data: str)
+            } else {
+                _ = self.bridge.processOutput(str)
+            }
+            self.refresh()
+        }
+    }
+
+    func startPtyLoop(masterFd: Int32) {
+        pty.start(masterFd: masterFd)
+    }
+
+    func stopPtyLoop() {
+        pty.stop()
     }
 
     func sendKey(keyCode: Int, modifiers: Int) {
-        guard masterFd >= 0 else { return }
-        guard let escapeSeq = bridge.handleKey(keyCode: keyCode, modifiers: modifiers),
-              !escapeSeq.isEmpty,
-              let data = escapeSeq.data(using: .utf8)
-        else { return }
-
-        var bytes = [UInt8](data)
-        for i in 0..<bytes.count {
-            if bytes[i] == 0x0A { bytes[i] = 0x0D }
+        guard pty.isConnected else { return }
+        let escapeSeq: String?
+        if sessionId >= 0 {
+            escapeSeq = bridge.handleKeyFor(sessionId: sessionId,
+                                            keyCode: keyCode, modifiers: modifiers)
+        } else {
+            escapeSeq = bridge.handleKey(keyCode: keyCode, modifiers: modifiers)
         }
-        _ = bridge.ptyWrite(masterFd: masterFd, data: Data(bytes))
+        guard let seq = escapeSeq, !seq.isEmpty else { return }
+        pty.writeEscapeSequence(seq)
     }
 
     func sendText(_ text: String) {
-        guard masterFd >= 0, let data = text.data(using: .utf8) else { return }
-        var bytes = [UInt8](data)
-        for i in 0..<bytes.count {
-            if bytes[i] == 0x0A { bytes[i] = 0x0D }
-        }
-        _ = bridge.ptyWrite(masterFd: masterFd, data: Data(bytes))
+        guard pty.isConnected else { return }
+        pty.writeText(text)
     }
 
-    /// Attached view (GPU or CPU) — notified on state changes.
-    weak var terminalView: TerminalBaseView?
-
-    /// Cursor position — always kept up to date via lightweight FFI.
-    var cursorRow: Int = 0
-    var cursorCol: Int = 0
-
-    /// Whether the grid data is stale (CPU renderer should refetch on next draw).
-    var gridDirty: Bool = false
-
-    /// Refresh terminal state after PTY output.
-    /// Only fetches cursor position (lightweight). Grid is fetched lazily
-    /// by the renderer when it actually draws.
+    /// Refresh after PTY output. Lightweight: cursor only, grid is lazy.
     func refresh() {
         title = bridge.getTitle()
-        if let cursor = bridge.getCursor() {
-            cursorRow = cursor.row
-            cursorCol = cursor.col
+        gridCache.refreshCursor()
+        gridCache.markDirty()
+        if terminalView != nil {
+            notifyView()
+        } else {
+            pendingRefresh = true
         }
-        gridDirty = true
+    }
+
+    private func notifyView() {
         if let gpuView = terminalView as? TerminalGPUView {
             gpuView.setNeedsRender()
         } else {
@@ -227,59 +225,44 @@ class TerminalState: ObservableObject {
         }
     }
 
-    /// Fetch the grid with differential updates.
-    /// On partial updates, merges new cells into the existing grid.
-    /// On full updates or first fetch, replaces the grid entirely.
     func fetchGrid() -> TerminalGrid? {
-        if gridDirty {
-            if let newGrid = bridge.getGrid() {
-                switch newGrid.dirty {
-                case .none:
-                    // Nothing changed — keep existing grid, just update cursor
-                    if var existing = grid {
-                        existing = TerminalGrid(
-                            rows: existing.rows, cols: existing.cols,
-                            cursor: newGrid.cursor, cells: existing.cells)
-                        grid = existing
-                    }
-
-                case .all:
-                    // Full update — replace entirely
-                    grid = newGrid
-
-                case .rect(let top, let left, let bottom, let right):
-                    if var existing = grid,
-                       existing.rows == newGrid.rows && existing.cols == newGrid.cols {
-                        // Remove old cells in the dirty rect
-                        var kept = existing.cells.filter { cell in
-                            !(cell.row >= top && cell.row <= bottom &&
-                              cell.col >= left && cell.col <= right)
-                        }
-                        // Add new cells from the dirty rect
-                        kept.append(contentsOf: newGrid.cells)
-                        grid = TerminalGrid(
-                            rows: existing.rows, cols: existing.cols,
-                            cursor: newGrid.cursor, cells: kept)
-                    } else {
-                        // Grid size changed — can't merge, treat as full
-                        grid = newGrid
-                    }
-                }
-            }
-            gridDirty = false
-        }
-        return grid
+        gridCache.fetch()
     }
 
+    func forceRefreshGrid() -> TerminalGrid? {
+        gridCache.forceRefresh()
+    }
+
+    /// Legacy resize for single-panel mode (when TabManager is not available).
+    /// In multi-panel mode, resizing is handled by PanelSplitView's container
+    /// GeometryReader → TabManager.applyLayoutResize() (MoonBit SoT).
     func resize(rows: Int, cols: Int) {
         guard rows != currentRows || cols != currentCols else { return }
-        currentRows = rows
-        currentCols = cols
-        _ = bridge.resize(rows: rows, cols: cols)
-        if masterFd >= 0 {
-            bridge.ptyResize(masterFd: masterFd, rows: rows, cols: cols)
+        gridCache.updateDimensions(rows: rows, cols: cols)
+        if sessionId >= 0 {
+            _ = bridge.resizeSession(sessionId: sessionId, rows: rows, cols: cols)
+        } else {
+            _ = bridge.resize(rows: rows, cols: cols)
+        }
+        if pty.isConnected {
+            bridge.ptyResize(masterFd: pty.masterFd, rows: rows, cols: cols)
         }
         refresh()
+    }
+
+    /// Legacy resize using pixel dimensions.
+    /// MoonBit converts pixels → grid cells using its own cell metrics (SoT).
+    func resizePx(widthPx: Int, heightPx: Int) {
+        // Use MoonBit's layout resize which handles pixel→grid conversion
+        let panelDims = bridge.resizeLayoutPx(widthPx: widthPx, heightPx: heightPx)
+        // In legacy mode there's only one panel — apply the first result
+        if let dim = panelDims.first {
+            gridCache.updateDimensions(rows: dim.rows, cols: dim.cols)
+            if pty.isConnected {
+                bridge.ptyResize(masterFd: pty.masterFd, rows: dim.rows, cols: dim.cols)
+            }
+            refresh()
+        }
     }
 }
 
@@ -312,12 +295,9 @@ class TerminalNSView: TerminalBaseView {
         }
     }
 
-    // MARK: - Resize (also recalculates grid via base class)
-
-    override func setBoundsSize(_ newSize: NSSize) {
-        super.setBoundsSize(newSize)
-        recalculateGridSize()
-    }
+    // MARK: - Resize
+    // Layout resize is driven by PanelSplitView (container), not individual panel views.
+    // setBoundsSize no longer triggers notifyLayoutResize.
 
     // MARK: - Selection helpers
 

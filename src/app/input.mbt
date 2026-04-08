@@ -16,11 +16,15 @@ pub fn translate_key_input(
   let ctrl = modifiers.land(@platform.mod_ctrl) != 0
   let shift = modifiers.land(@platform.mod_shift) != 0
   let alt = modifiers.land(@platform.mod_alt) != 0
-  // Printable ASCII range with Ctrl modifier
+  // Ctrl+key → control code
+  // Case 1: Platform gives us the letter (key_code 0x40-0x7E)
   if ctrl && key_code >= 0x40 && key_code <= 0x7E {
-    // Ctrl+A = 0x01, Ctrl+B = 0x02, ..., Ctrl+Z = 0x1A
     let ctrl_code = key_code.land(0x1F)
     return ctrl_code.unsafe_to_char().to_string()
+  }
+  // Case 2: Platform gives us the raw control code (key_code 0x00-0x1F)
+  if ctrl && key_code >= 0x00 && key_code <= 0x1F {
+    return key_code.unsafe_to_char().to_string()
   }
   // Alt wraps the key in ESC prefix
   if alt && key_code >= 0x20 && key_code <= 0x7E {

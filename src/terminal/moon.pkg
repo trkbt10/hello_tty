@@ -12,6 +12,7 @@ options(
     "screen.mbt": [ "native" ],
     "scrollback.mbt": [ "native" ],
     "types.mbt": [ "native" ],
+    "tests.mbt": [ "native" ],
     "bench_bench.mbt": [ "native" ],
   },
 )
