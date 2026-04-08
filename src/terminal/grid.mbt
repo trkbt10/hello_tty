@@ -133,18 +133,39 @@ pub fn Grid::clear_rows(self : Grid, from : Int, to : Int) -> Unit {
 
 ///|
 /// Clear cells in a row from column `from` to `to` (exclusive).
+/// Handles wide character boundaries: if the clear range splits a wide character
+/// (covers only the head or only the continuation), the other half is cleaned up.
 pub fn Grid::clear_cells(self : Grid, row : Int, from : Int, to : Int) -> Unit {
   let line = self.lines[row]
   let start = from.clamp(min=0, max=self.cols)
   let end = to.clamp(min=0, max=self.cols)
+  if start >= end {
+    return
+  }
+  // If the start of the range lands on a continuation cell (width=0),
+  // the preceding head cell loses its continuation — clean it up.
+  if start > 0 && line.cells[start].width == 0 {
+    let head = line.cells[start - 1]
+    if head.width == 2 {
+      head.char = ' '
+      head.width = 1
+      self.mark_dirty(row, start - 1)
+    }
+  }
+  // If the end of the range lands inside a wide character (i.e. the cell just
+  // before `end` is a head with width=2, meaning its continuation at `end` is
+  // outside the clear range), clean up the continuation.
+  // Also: if the cell at `end` is a continuation (width=0), its head was cleared.
+  if end < self.cols && line.cells[end].width == 0 {
+    line.cells[end].reset()
+    self.mark_dirty(row, end)
+  }
   for i in start..<end {
     line.cells[i].reset()
   }
   line.dirty = true
-  if start < end {
-    self.mark_dirty(row, start)
-    self.mark_dirty(row, end - 1)
-  }
+  self.mark_dirty(row, start)
+  self.mark_dirty(row, end - 1)
 }
 
 ///|
@@ -275,9 +296,53 @@ pub fn Grid::delete_lines(self : Grid, at_row : Int, n : Int) -> Unit {
 ///|
 /// Insert n blank cells at position (row, col), shifting cells to the right.
 /// Cells that fall off the right edge are lost.
+/// Handles wide character boundaries: if the insertion point splits a wide
+/// character, or if a wide character is pushed partially off the right edge,
+/// the orphaned halves are cleaned up.
 pub fn Grid::insert_cells(self : Grid, row : Int, col : Int, n : Int) -> Unit {
   let line = self.lines[row]
   let count = n.clamp(min=0, max=self.cols - col)
+  if count == 0 {
+    return
+  }
+  // Before insertion: if the cell at `col` is a continuation (width=0),
+  // its head at col-1 will be separated from its continuation — clean up both.
+  // The head loses its continuation, and the continuation itself (which will
+  // shift right) becomes orphaned.
+  if col > 0 && line.cells[col].width == 0 {
+    let head = line.cells[col - 1]
+    if head.width == 2 {
+      head.char = ' '
+      head.width = 1
+    }
+    // Also clean up the continuation cell itself — after the shift it will
+    // no longer be preceded by a valid head.
+    line.cells[col].reset()
+  }
+  // Check if cells that will fall off the right edge include a wide char head
+  // whose continuation would survive (or vice versa).
+  // The cells that fall off are at positions [cols - count, cols).
+  // If the cell at (cols - count - 1) is a wide head (width=2) and its
+  // continuation at (cols - count) would be pushed off — the head survives
+  // but loses its continuation.
+  let shift_boundary = self.cols - count
+  if shift_boundary > 0 && shift_boundary < self.cols {
+    let cell_at_boundary = line.cells[shift_boundary]
+    if cell_at_boundary.width == 0 {
+      // Continuation is at the boundary — its head won't be pushed off.
+      // After shift, the head remains but continuation is lost.
+      // Actually the continuation IS the one being lost (pushed off).
+      // Wait — cells at [shift_boundary, cols) are lost. The continuation
+      // at shift_boundary is lost. Its head at shift_boundary-1 survives — clean it.
+      let head = line.cells[shift_boundary - 1]
+      if head.width == 2 {
+        head.char = ' '
+        head.width = 1
+      }
+    }
+    // If the cell at shift_boundary is a wide head, its continuation at
+    // shift_boundary+1 is also being lost — both are lost, so that's fine.
+  }
   for _i in 0..<count {
     line.cells.pop() |> ignore
     line.cells.insert(col, Cell::empty())
@@ -289,12 +354,48 @@ pub fn Grid::insert_cells(self : Grid, row : Int, col : Int, n : Int) -> Unit {
 ///|
 /// Delete n cells at position (row, col), shifting cells to the left.
 /// Blank cells appear at the right edge.
+/// Handles wide character boundaries: if deletion splits a wide character
+/// (removes only the head or only the continuation), the orphaned half is cleaned up.
 pub fn Grid::delete_cells(self : Grid, row : Int, col : Int, n : Int) -> Unit {
   let line = self.lines[row]
   let count = n.clamp(min=0, max=self.cols - col)
+  if count == 0 {
+    return
+  }
+  // Before deletion: check if the cell at `col` is a continuation (width=0).
+  // If so, its head at col-1 will lose its continuation — clean it up.
+  if col > 0 && line.cells[col].width == 0 {
+    let head = line.cells[col - 1]
+    if head.width == 2 {
+      head.char = ' '
+      head.width = 1
+    }
+  }
+  // Check if the last cell to be deleted (col + count - 1) is the head of a
+  // wide character whose continuation (at col + count) would survive.
+  // After the shift, that continuation becomes orphaned — clean it up.
+  let del_end = col + count
+  if del_end < self.cols && line.cells[del_end].width == 0 {
+    // The continuation's head was deleted — reset the continuation
+    line.cells[del_end].reset()
+  }
+  // Also check if the first cell to be deleted is a wide head whose
+  // continuation is also being deleted — that's fine. But if the first
+  // cell being deleted is a wide head and its continuation is NOT being
+  // deleted, the continuation shifts left and becomes the new col position.
+  // Actually this is already handled: after removal + shift, we need to
+  // check again. Let's just do the deletion first.
   for _i in 0..<count {
     line.cells.remove(col) |> ignore
     line.cells.push(Cell::empty())
+  }
+  // After deletion, check the cell now at position `col` — it was shifted in.
+  // If it's an orphaned continuation (width=0) with no valid head before it,
+  // clean it up.
+  if col < self.cols && line.cells[col].width == 0 {
+    if col == 0 || line.cells[col - 1].width != 2 {
+      line.cells[col].reset()
+    }
   }
   line.dirty = true
   self.mark_row_dirty(row)
