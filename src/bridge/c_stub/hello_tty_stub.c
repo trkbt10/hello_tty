@@ -34,6 +34,9 @@
 #define mbt_ffi_list_sessions     _M0FP47trkbt1010hello__tty3src6bridge19ffi__list__sessions
 #define mbt_ffi_get_active_session _M0FP47trkbt1010hello__tty3src6bridge25ffi__get__active__session
 
+// Cursor (lightweight query)
+#define mbt_ffi_get_cursor        _M0FP47trkbt1010hello__tty3src6bridge16ffi__get__cursor
+
 // GPU rendering
 #define mbt_ffi_gpu_init          _M0FP47trkbt1010hello__tty3src6bridge14ffi__gpu__init
 #define mbt_ffi_gpu_resize        _M0FP47trkbt1010hello__tty3src6bridge16ffi__gpu__resize
@@ -69,6 +72,9 @@ extern int32_t         mbt_ffi_destroy_session(moonbit_bytes_t id);
 extern int32_t         mbt_ffi_switch_session(moonbit_bytes_t id);
 extern moonbit_bytes_t mbt_ffi_list_sessions(void);
 extern int32_t         mbt_ffi_get_active_session(void);
+
+// Cursor
+extern moonbit_bytes_t mbt_ffi_get_cursor(void);
 
 // GPU rendering
 extern int32_t         mbt_ffi_gpu_init(moonbit_bytes_t surface, moonbit_bytes_t width, moonbit_bytes_t height);
@@ -146,6 +152,12 @@ char *hello_tty_handle_key(const char *key_code, const char *modifiers) {
 char *hello_tty_get_grid(void) {
     ensure_init();
     moonbit_bytes_t result = mbt_ffi_get_grid();
+    return moonbit_bytes_to_cstr(result);
+}
+
+char *hello_tty_get_cursor(void) {
+    ensure_init();
+    moonbit_bytes_t result = mbt_ffi_get_cursor();
     return moonbit_bytes_to_cstr(result);
 }
 

@@ -144,7 +144,7 @@ pub fn Renderer::render(
       cell_quads.push({
         row,
         col,
-        cell_cols: if cell.width > 0 { cell.width } else { 1 },
+        cell_cols: cell.width,
         glyph: glyph_key,
         fg: resolved_fg,
         bg: resolved_bg,

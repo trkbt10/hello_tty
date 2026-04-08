@@ -5,11 +5,13 @@ import {
 options(
   targets: {
     "cell.mbt": [ "native" ],
+    "charwidth.mbt": [ "native" ],
     "cursor.mbt": [ "native" ],
     "grid.mbt": [ "native" ],
     "handler.mbt": [ "native" ],
     "screen.mbt": [ "native" ],
     "scrollback.mbt": [ "native" ],
     "types.mbt": [ "native" ],
+    "bench_bench.mbt": [ "native" ],
   },
 )

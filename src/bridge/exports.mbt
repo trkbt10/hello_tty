@@ -170,9 +170,41 @@ pub fn ffi_get_title() -> Bytes {
 }
 
 ///|
+/// Get cursor position and visibility — lightweight alternative to ffi_get_grid.
+/// Returns "row,col,visible,style" (e.g. "5,12,1,block").
+/// For GPU renderer path where full grid serialization is unnecessary.
+pub fn ffi_get_cursor() -> Bytes {
+  match bridge_state.sessions.active_session() {
+    Some(session) => {
+      let cursor = session.get_terminal().get_cursor()
+      let sb = StringBuilder::new(size_hint=32)
+      sb.write_string(cursor.row.to_string())
+      sb.write_char(',')
+      sb.write_string(cursor.col.to_string())
+      sb.write_char(',')
+      sb.write_string(if cursor.visible { "1" } else { "0" })
+      sb.write_char(',')
+      sb.write_string(
+        match cursor.style {
+          Block => "block"
+          Underline => "underline"
+          Bar => "bar"
+        },
+      )
+      result_buf.result_bytes = @utf8.encode(sb.to_string())
+      result_buf.result_bytes
+    }
+    None => Bytes::new(0)
+  }
+}
+
+///|
 /// Get the visible terminal grid as a JSON string.
 /// Colors are FULLY RESOLVED using the theme — platform adapters receive
 /// only concrete RGB values, never palette indices or "default" markers.
+///
+/// Uses direct StringBuilder to avoid Map/Json/stringify overhead.
+/// This function is on the hot path (called every refresh cycle).
 pub fn ffi_get_grid() -> Bytes {
   match bridge_state.sessions.active_session() {
     Some(session) => {
@@ -180,23 +212,39 @@ pub fn ffi_get_grid() -> Bytes {
       let grid = terminal.get_grid()
       let cursor = terminal.get_cursor()
       let theme = bridge_state.theme
-      let cursor_map : Map[String, Json] = {
-        "row": cursor.row.to_json(),
-        "col": cursor.col.to_json(),
-        "visible": cursor.visible.to_json(),
-        "style": (match cursor.style {
-            Block => "block"
-            Underline => "underline"
-            Bar => "bar"
-          }).to_json(),
-      }
-      let cells_arr : Array[Json] = []
+      // Pre-size: ~20 bytes per empty cell skip, ~80 bytes per cell with content
+      let sb = StringBuilder::new(size_hint=grid.rows * grid.cols * 20)
+      sb.write_string("{\"rows\":")
+      sb.write_string(grid.rows.to_string())
+      sb.write_string(",\"cols\":")
+      sb.write_string(grid.cols.to_string())
+      sb.write_string(",\"cursor\":{\"row\":")
+      sb.write_string(cursor.row.to_string())
+      sb.write_string(",\"col\":")
+      sb.write_string(cursor.col.to_string())
+      sb.write_string(",\"visible\":")
+      sb.write_string(if cursor.visible { "true" } else { "false" })
+      sb.write_string(",\"style\":\"")
+      sb.write_string(
+        match cursor.style {
+          Block => "block"
+          Underline => "underline"
+          Bar => "bar"
+        },
+      )
+      sb.write_string("\"},\"cells\":[")
+      let mut first = true
       for row in 0..<grid.rows {
         let line = grid.lines[row]
         for col in 0..<grid.cols {
           let cell = line.get(col)
           if cell.char == '\u0000' {
             continue
+          }
+          if first {
+            first = false
+          } else {
+            sb.write_char(',')
           }
           // Resolve colors using theme (SoT)
           let mut fg_color = cell.fg
@@ -208,28 +256,73 @@ pub fn ffi_get_grid() -> Bytes {
           }
           let resolved_fg = theme.resolve_color(fg_color, true)
           let resolved_bg = theme.resolve_color(bg_color, false)
-          let cell_map : Map[String, Json] = {
-            "r": row.to_json(),
-            "c": col.to_json(),
-            "ch": cell.char.to_string().to_json(),
-            "fg": rgba_to_json(resolved_fg),
-            "bg": rgba_to_json(resolved_bg),
-            "a": cell.attrs.flags.to_json(),
-            "w": cell.width.to_json(),
-          }
-          cells_arr.push(cell_map.to_json())
+          sb.write_string("{\"r\":")
+          sb.write_string(row.to_string())
+          sb.write_string(",\"c\":")
+          sb.write_string(col.to_string())
+          sb.write_string(",\"ch\":")
+          write_json_char(sb, cell.char)
+          sb.write_string(",\"fg\":[")
+          sb.write_string(resolved_fg.r.to_int().to_string())
+          sb.write_char(',')
+          sb.write_string(resolved_fg.g.to_int().to_string())
+          sb.write_char(',')
+          sb.write_string(resolved_fg.b.to_int().to_string())
+          sb.write_string("],\"bg\":[")
+          sb.write_string(resolved_bg.r.to_int().to_string())
+          sb.write_char(',')
+          sb.write_string(resolved_bg.g.to_int().to_string())
+          sb.write_char(',')
+          sb.write_string(resolved_bg.b.to_int().to_string())
+          sb.write_string("],\"a\":")
+          sb.write_string(cell.attrs.flags.to_string())
+          sb.write_string(",\"w\":")
+          sb.write_string(cell.width.to_string())
+          sb.write_char('}')
         }
       }
-      let grid_map : Map[String, Json] = {
-        "rows": grid.rows.to_json(),
-        "cols": grid.cols.to_json(),
-        "cursor": cursor_map.to_json(),
-        "cells": cells_arr.to_json(),
-      }
-      result_buf.result_bytes = @utf8.encode(grid_map.to_json().stringify())
+      sb.write_string("]}")
+      result_buf.result_bytes = @utf8.encode(sb.to_string())
       result_buf.result_bytes
     }
     None => @utf8.encode("{}")
+  }
+}
+
+///|
+/// Write a character as a JSON string value (with quotes and escaping).
+fn write_json_char(sb : StringBuilder, c : Char) -> Unit {
+  let cp = c.to_int()
+  sb.write_char('"')
+  match cp {
+    0x22 => sb.write_string("\\\"") // "
+    0x5C => sb.write_string("\\\\") // \
+    0x08 => sb.write_string("\\b")
+    0x0C => sb.write_string("\\f")
+    0x0A => sb.write_string("\\n")
+    0x0D => sb.write_string("\\r")
+    0x09 => sb.write_string("\\t")
+    _ =>
+      if cp < 0x20 {
+        // Control character: \u00XX
+        sb.write_string("\\u00")
+        let hi = cp / 16
+        let lo = cp % 16
+        sb.write_char(hex_digit(hi))
+        sb.write_char(hex_digit(lo))
+      } else {
+        sb.write_char(c)
+      }
+  }
+  sb.write_char('"')
+}
+
+///|
+fn hex_digit(n : Int) -> Char {
+  if n < 10 {
+    (0x30 + n).unsafe_to_char()
+  } else {
+    (0x61 + n - 10).unsafe_to_char()
   }
 }
 

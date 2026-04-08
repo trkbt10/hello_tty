@@ -75,6 +75,11 @@ char *hello_tty_handle_key(const char *key_code, const char *modifiers);
 // Caller must free the returned string.
 char *hello_tty_get_grid(void);
 
+// Get cursor position and visibility (lightweight, no JSON overhead).
+// Returns "row,col,visible,style" e.g. "5,12,1,block".
+// Caller must free the returned string.
+char *hello_tty_get_cursor(void);
+
 // Get the window title (set via OSC 0/2).
 // Caller must free the returned string.
 char *hello_tty_get_title(void);

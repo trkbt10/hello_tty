@@ -48,24 +48,21 @@ struct TerminalView: NSViewRepresentable {
     @ObservedObject var state: TerminalState
 
     func makeNSView(context: Context) -> NSView {
+        let view: TerminalBaseView
         if MoonBitBridge.shared.hasGPU {
-            let view = TerminalGPUView()
-            view.terminalState = state
-            return view
+            view = TerminalGPUView()
         } else {
-            let view = TerminalNSView()
-            view.terminalState = state
-            return view
+            view = TerminalNSView()
         }
+        view.terminalState = state
+        state.terminalView = view
+        return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        if let gpuView = nsView as? TerminalGPUView {
-            gpuView.terminalState = state
-        } else if let cpuView = nsView as? TerminalNSView {
-            cpuView.terminalState = state
-            cpuView.needsDisplay = true
-        }
+        guard let baseView = nsView as? TerminalBaseView else { return }
+        baseView.terminalState = state
+        state.terminalView = baseView
     }
 }
 
@@ -73,8 +70,12 @@ struct TerminalView: NSViewRepresentable {
 
 /// Terminal state — bridges MoonBit core + PTY session to SwiftUI.
 class TerminalState: ObservableObject {
-    @Published var grid: TerminalGrid?
     @Published var title: String = "hello_tty"
+
+    /// Grid is fetched on-demand by the renderer, not eagerly on every refresh.
+    /// CPU renderer calls `fetchGrid()` in its `draw()`.
+    /// GPU renderer never needs it (MoonBit renders directly via wgpu).
+    var grid: TerminalGrid?
 
     let bridge = MoonBitBridge.shared
     let theme: TerminalTheme
@@ -134,21 +135,36 @@ class TerminalState: ObservableObject {
         }
     }
 
+    /// Whether a main-thread refresh is already scheduled.
+    private var refreshPending = false
+
     /// Background PTY read loop.
     /// IMPORTANT: MoonBit's GC is NOT thread-safe. Only pure-C functions
     /// (ptyPoll, ptyRead) may be called from this background thread.
+    /// Batches rapid consecutive reads into a single main-thread dispatch.
     private func ptyReadLoop() {
         let fd = masterFd
         while running {
             let pollResult = bridge.ptyPoll(masterFd: fd, timeoutMs: 16)
             if pollResult > 0 {
-                guard let data = bridge.ptyRead(masterFd: fd) else {
-                    running = false
-                    break
+                // Drain all available data before dispatching
+                var accumulated = Data()
+                while true {
+                    guard let data = bridge.ptyRead(masterFd: fd) else {
+                        running = false
+                        break
+                    }
+                    accumulated.append(data)
+                    // Check if more data is immediately available
+                    let moreResult = bridge.ptyPoll(masterFd: fd, timeoutMs: 0)
+                    if moreResult <= 0 { break }
                 }
+                if !running { break }
+                if accumulated.isEmpty { continue }
+
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self, self.running else { return }
-                    if let str = String(data: data, encoding: .utf8) {
+                    if let str = String(data: accumulated, encoding: .utf8) {
                         _ = self.bridge.processOutput(str)
                         self.refresh()
                     }
@@ -184,9 +200,40 @@ class TerminalState: ObservableObject {
         _ = bridge.ptyWrite(masterFd: masterFd, data: Data(bytes))
     }
 
+    /// Attached view (GPU or CPU) — notified on state changes.
+    weak var terminalView: TerminalBaseView?
+
+    /// Cursor position — always kept up to date via lightweight FFI.
+    var cursorRow: Int = 0
+    var cursorCol: Int = 0
+
+    /// Whether the grid data is stale (CPU renderer should refetch on next draw).
+    var gridDirty: Bool = false
+
+    /// Refresh terminal state after PTY output.
+    /// Only fetches cursor position (lightweight). Grid is fetched lazily
+    /// by the renderer when it actually draws.
     func refresh() {
-        grid = bridge.getGrid()
         title = bridge.getTitle()
+        if let cursor = bridge.getCursor() {
+            cursorRow = cursor.row
+            cursorCol = cursor.col
+        }
+        gridDirty = true
+        if let gpuView = terminalView as? TerminalGPUView {
+            gpuView.setNeedsRender()
+        } else {
+            terminalView?.needsDisplay = true
+        }
+    }
+
+    /// Fetch the full grid (called on-demand by CPU renderer).
+    func fetchGrid() -> TerminalGrid? {
+        if gridDirty {
+            grid = bridge.getGrid()
+            gridDirty = false
+        }
+        return grid
     }
 
     func resize(rows: Int, cols: Int) {
@@ -269,7 +316,7 @@ class TerminalNSView: TerminalBaseView {
         ctx.setFillColor(theme.background.cgColor)
         ctx.fill(bounds)
 
-        guard let grid = state.grid else { return }
+        guard let grid = state.fetchGrid() else { return }
 
         var cellMap: [Int: [Int: TerminalGrid.CellData]] = [:]
         for cell in grid.cells {
@@ -340,8 +387,8 @@ class TerminalNSView: TerminalBaseView {
 
         // Cursor
         if grid.cursor.visible && cursorVisible {
-            let cursorX = CGFloat(grid.cursor.col) * cellW
-            let cursorY = bounds.height - CGFloat(grid.cursor.row + 1) * cellH
+            let cursorX = CGFloat(state.cursorCol) * cellW
+            let cursorY = bounds.height - CGFloat(state.cursorRow + 1) * cellH
             var cursorRect = CGRect(x: cursorX, y: cursorY, width: cellW, height: cellH)
 
             switch grid.cursor.style {
@@ -358,10 +405,9 @@ class TerminalNSView: TerminalBaseView {
         }
 
         // IME marked text (composition preview)
-        if let marked = input?.markedText, marked.length > 0,
-           let grid = state.grid {
-            let cursorX = CGFloat(grid.cursor.col) * cellW
-            let cursorY = bounds.height - CGFloat(grid.cursor.row + 1) * cellH
+        if let marked = input?.markedText, marked.length > 0 {
+            let cursorX = CGFloat(state.cursorCol) * cellW
+            let cursorY = bounds.height - CGFloat(state.cursorRow + 1) * cellH
 
             let compositionAttrs: [NSAttributedString.Key: Any] = [
                 .font: font,

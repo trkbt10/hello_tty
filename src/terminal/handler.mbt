@@ -68,9 +68,24 @@ pub fn Terminal::handle_events(
 
 ///|
 /// Print a character at the cursor position.
+///
+/// Handles wide characters (CJK, fullwidth, emoji) that occupy 2 cells:
+///   - The first cell holds the character with width=2
+///   - The second cell is a continuation cell with width=0 and char='\u0000'
+///
+/// When overwriting a wide character or its continuation cell, the other
+/// half is cleared to prevent rendering artifacts.
 fn Terminal::print_char(self : Terminal, c : Char) -> Unit {
   let grid = self.screen.active_grid()
   let cursor = self.screen.active_cursor()
+  let width = char_width(c)
+  // Zero-width characters (combining marks, etc.) — don't advance cursor
+  if width == 0 {
+    // For now, ignore zero-width characters.
+    // A full implementation would attach them to the previous cell as
+    // combining characters, but that requires grapheme cluster support.
+    return
+  }
   // Handle pending wrap (auto-wrap at right margin)
   if cursor.wrap_pending {
     if self.modes.auto_wrap {
@@ -84,18 +99,52 @@ fn Terminal::print_char(self : Terminal, c : Char) -> Unit {
     }
     cursor.wrap_pending = false
   }
+  // Wide character that doesn't fit on the current line:
+  // If the cursor is at the last column and the character is 2 cells wide,
+  // we need to wrap first (leave the last column blank).
+  if width == 2 && cursor.col >= self.cols - 1 {
+    if self.modes.auto_wrap {
+      // Fill the remaining cell with a space to avoid artifacts
+      grid.set_cell_with_width(cursor.row, cursor.col, ' ', cursor.pen, 1)
+      cursor.col = 0
+      if cursor.row == grid.scroll_bottom {
+        self.screen.scroll_up(1)
+      } else if cursor.row < self.rows - 1 {
+        cursor.row += 1
+      }
+      grid.lines[cursor.row].wrapped = true
+    } else {
+      // No auto-wrap: just place the character at the last column as 1-width
+      // (truncated — this matches standard terminal behavior)
+      grid.set_cell_with_width(cursor.row, cursor.col, c, cursor.pen, 1)
+      return
+    }
+  }
   // Insert mode: shift characters right
   if self.modes.insert_mode {
-    grid.insert_cells(cursor.row, cursor.col, 1)
+    grid.insert_cells(cursor.row, cursor.col, width)
   }
-  // Write the character with current pen attributes
-  grid.set_cell(cursor.row, cursor.col, c, cursor.pen)
+  // Clear any wide character that we're overwriting.
+  // If the cell under the cursor is a continuation cell (width=0), the
+  // preceding cell is the head of a wide character — clear it.
+  // If the cell under the cursor is a wide character head (width=2),
+  // its continuation cell needs clearing too.
+  grid.clear_wide_char_at(cursor.row, cursor.col)
+  // Write the character
+  grid.set_cell_with_width(cursor.row, cursor.col, c, cursor.pen, width)
+  // For wide characters, set continuation cell
+  if width == 2 && cursor.col + 1 < self.cols {
+    grid.set_cell_with_width(
+      cursor.row, cursor.col + 1, '\u0000', cursor.pen, 0,
+    )
+  }
   // Advance cursor
-  if cursor.col >= self.cols - 1 {
-    // At right margin: set pending wrap instead of moving
+  let new_col = cursor.col + width
+  if new_col >= self.cols {
+    cursor.col = self.cols - 1
     cursor.wrap_pending = true
   } else {
-    cursor.col += 1
+    cursor.col = new_col
   }
 }
 

@@ -141,7 +141,7 @@ class InputHandler {
 
     func selectedText() -> String? {
         guard let state = state,
-              let grid = state.grid,
+              let grid = state.fetchGrid(),
               let anchor = selectionAnchor,
               let end = selectionEnd
         else { return nil }
@@ -182,9 +182,19 @@ class InputHandler {
     // MARK: - Cursor rect for IME popup
 
     func firstRect(in view: NSView) -> NSRect {
-        guard let state = state, let grid = state.grid else { return .zero }
-        let x = CGFloat(grid.cursor.col) * state.cellWidth
-        let y = view.bounds.height - CGFloat(grid.cursor.row + 1) * state.cellHeight
+        guard let state = state else { return .zero }
+        let col: Int
+        let row: Int
+        if let grid = state.grid {
+            col = grid.cursor.col
+            row = grid.cursor.row
+        } else {
+            // GPU path: use lightweight cursor info
+            col = state.cursorCol
+            row = state.cursorRow
+        }
+        let x = CGFloat(col) * state.cellWidth
+        let y = view.bounds.height - CGFloat(row + 1) * state.cellHeight
         let rect = CGRect(x: x, y: y, width: state.cellWidth, height: state.cellHeight)
         guard let window = view.window else { return rect }
         return window.convertToScreen(view.convert(rect, to: nil))

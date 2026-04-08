@@ -14,6 +14,7 @@ class MoonBitBridge {
     private typealias ProcessOutputFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
     private typealias HandleKeyFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
     private typealias GetGridFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
+    private typealias GetCursorFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
     private typealias GetTitleFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
     private typealias GetModesFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
     private typealias ResizeFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
@@ -61,6 +62,7 @@ class MoonBitBridge {
     private var fnProcessOutput: ProcessOutputFn?
     private var fnHandleKey: HandleKeyFn?
     private var fnGetGrid: GetGridFn?
+    private var fnGetCursor: GetCursorFn?
     private var fnGetTitle: GetTitleFn?
     private var fnGetModes: GetModesFn?
     private var fnResize: ResizeFn?
@@ -193,6 +195,7 @@ class MoonBitBridge {
         fnProcessOutput = sym("hello_tty_process_output")
         fnHandleKey = sym("hello_tty_handle_key")
         fnGetGrid = sym("hello_tty_get_grid")
+        fnGetCursor = sym("hello_tty_get_cursor")
         fnGetTitle = sym("hello_tty_get_title")
         fnGetModes = sym("hello_tty_get_modes")
         fnResize = sym("hello_tty_resize")
@@ -272,6 +275,32 @@ class MoonBitBridge {
         defer { fnFreeString?(ptr) }
         let jsonStr = String(cString: ptr)
         return TerminalGrid.fromJSON(jsonStr)
+    }
+
+    /// Lightweight cursor query — no JSON, just "row,col,visible,style".
+    struct CursorInfo {
+        let row: Int
+        let col: Int
+        let visible: Bool
+        let style: String
+    }
+
+    func getCursor() -> CursorInfo? {
+        guard let fn = fnGetCursor else { return nil }
+        guard let ptr = fn() else { return nil }
+        defer { fnFreeString?(ptr) }
+        let str = String(cString: ptr)
+        let parts = str.split(separator: ",")
+        guard parts.count == 4,
+              let row = Int(parts[0]),
+              let col = Int(parts[1])
+        else { return nil }
+        return CursorInfo(
+            row: row,
+            col: col,
+            visible: parts[2] == "1",
+            style: String(parts[3])
+        )
     }
 
     func getTitle() -> String {

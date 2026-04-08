@@ -45,6 +45,57 @@ pub fn Grid::set_cell(
 }
 
 ///|
+/// Set a character with explicit cell width (for wide character support).
+pub fn Grid::set_cell_with_width(
+  self : Grid,
+  row : Int,
+  col : Int,
+  char : Char,
+  pen : Cell,
+  width : Int,
+) -> Unit {
+  let cell = self.lines[row].get(col)
+  cell.char = char
+  cell.fg = pen.fg
+  cell.bg = pen.bg
+  cell.attrs.flags = pen.attrs.flags
+  cell.width = width
+  self.lines[row].dirty = true
+}
+
+///|
+/// Clear wide character fragments when overwriting.
+///
+/// If the cell at (row, col) is:
+///   - A continuation cell (width=0): the preceding cell is the head of a
+///     wide character. Reset the head to a space with width=1.
+///   - A wide character head (width=2): the next cell is a continuation.
+///     Reset the continuation to empty with width=1.
+///
+/// This prevents rendering artifacts when a narrow character overwrites
+/// part of a wide character.
+pub fn Grid::clear_wide_char_at(self : Grid, row : Int, col : Int) -> Unit {
+  let cell = self.lines[row].get(col)
+  if cell.width == 0 && col > 0 {
+    // This is a continuation cell — clear the head
+    let head = self.lines[row].get(col - 1)
+    if head.width == 2 {
+      head.char = ' '
+      head.width = 1
+    }
+  }
+  if cell.width == 2 && col + 1 < self.cols {
+    // This is a wide head — clear the continuation
+    let cont = self.lines[row].get(col + 1)
+    if cont.width == 0 {
+      cont.char = '\u0000'
+      cont.width = 1
+    }
+  }
+  self.lines[row].dirty = true
+}
+
+///|
 /// Clear the entire grid.
 pub fn Grid::clear(self : Grid) -> Unit {
   for i in 0..<self.rows {
