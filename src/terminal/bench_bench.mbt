@@ -12,8 +12,8 @@
 // ========== Grid JSON Serialization ==========
 
 ///|
-/// Old approach: Map/Json/stringify chain. Kept for comparison.
-fn serialize_grid_json_old(grid : Grid) -> String {
+/// Serialize full grid using @json.
+fn serialize_grid_json(grid : Grid) -> String {
   let cells_arr : Array[Json] = []
   for row in 0..<grid.rows {
     let line = grid.lines[row]
@@ -22,7 +22,7 @@ fn serialize_grid_json_old(grid : Grid) -> String {
       if cell.char == '\u0000' {
         continue
       }
-      let cell_map : Map[String, Json] = {
+      let m : Map[String, Json] = {
         "r": row.to_json(),
         "c": col.to_json(),
         "ch": cell.char.to_string().to_json(),
@@ -31,64 +31,80 @@ fn serialize_grid_json_old(grid : Grid) -> String {
         "a": cell.attrs.flags.to_json(),
         "w": cell.width.to_json(),
       }
-      cells_arr.push(cell_map.to_json())
+      cells_arr.push(m.to_json())
     }
+  }
+  let cursor_map : Map[String, Json] = {
+    "row": Int::to_json(0),
+    "col": Int::to_json(0),
+    "visible": true.to_json(),
+    "style": "block".to_json(),
   }
   let grid_map : Map[String, Json] = {
     "rows": grid.rows.to_json(),
     "cols": grid.cols.to_json(),
-    "cursor": {
-      let m : Map[String, Json] = {
-        "row": Int::to_json(0),
-        "col": Int::to_json(0),
-        "visible": true.to_json(),
-        "style": "block".to_json(),
-      }
-      m.to_json()
-    },
+    "cursor": cursor_map.to_json(),
     "cells": cells_arr.to_json(),
   }
   grid_map.to_json().stringify()
 }
 
 ///|
-/// New approach: direct StringBuilder. Matches the optimized ffi_get_grid.
-fn serialize_grid_json(grid : Grid) -> String {
-  let sb = StringBuilder::new(size_hint=grid.rows * grid.cols * 20)
-  sb.write_string("{\"rows\":")
-  sb.write_string(grid.rows.to_string())
-  sb.write_string(",\"cols\":")
-  sb.write_string(grid.cols.to_string())
-  sb.write_string(",\"cursor\":{\"row\":0,\"col\":0,\"visible\":true,\"style\":\"block\"}")
-  sb.write_string(",\"cells\":[")
-  let mut first = true
-  for row in 0..<grid.rows {
-    let line = grid.lines[row]
-    for col in 0..<grid.cols {
-      let cell = line.get(col)
-      if cell.char == '\u0000' {
-        continue
+/// Differential: only serialize cells within the dirty bounding box using @json.
+fn serialize_grid_json_diff(grid : Grid) -> String {
+  let cursor_map : Map[String, Json] = {
+    "row": Int::to_json(0),
+    "col": Int::to_json(0),
+    "visible": true.to_json(),
+    "style": "block".to_json(),
+  }
+  match grid.get_dirty_rect() {
+    None => {
+      let grid_map : Map[String, Json] = {
+        "rows": grid.rows.to_json(),
+        "cols": grid.cols.to_json(),
+        "cursor": cursor_map.to_json(),
+        "dirty": "none".to_json(),
+        "cells": ([] : Array[Json]).to_json(),
       }
-      if first {
-        first = false
+      grid_map.to_json().stringify()
+    }
+    Some((dr_top, dr_left, dr_bottom, dr_right)) => {
+      let dirty_json : Json = if grid.dirty_all {
+        "all".to_json()
       } else {
-        sb.write_char(',')
+        [dr_top, dr_left, dr_bottom, dr_right].to_json()
       }
-      sb.write_string("{\"r\":")
-      sb.write_string(row.to_string())
-      sb.write_string(",\"c\":")
-      sb.write_string(col.to_string())
-      sb.write_string(",\"ch\":\"")
-      sb.write_char(cell.char)
-      sb.write_string("\",\"fg\":[230,230,230],\"bg\":[20,20,26],\"a\":")
-      sb.write_string(cell.attrs.flags.to_string())
-      sb.write_string(",\"w\":")
-      sb.write_string(cell.width.to_string())
-      sb.write_char('}')
+      let cells_arr : Array[Json] = []
+      for row in dr_top..=dr_bottom {
+        let line = grid.lines[row]
+        for col in dr_left..=dr_right {
+          let cell = line.get(col)
+          if cell.char == '\u0000' {
+            continue
+          }
+          let m : Map[String, Json] = {
+            "r": row.to_json(),
+            "c": col.to_json(),
+            "ch": cell.char.to_string().to_json(),
+            "fg": [230, 230, 230].to_json(),
+            "bg": [20, 20, 26].to_json(),
+            "a": cell.attrs.flags.to_json(),
+            "w": cell.width.to_json(),
+          }
+          cells_arr.push(m.to_json())
+        }
+      }
+      let grid_map : Map[String, Json] = {
+        "rows": grid.rows.to_json(),
+        "cols": grid.cols.to_json(),
+        "cursor": cursor_map.to_json(),
+        "dirty": dirty_json,
+        "cells": cells_arr.to_json(),
+      }
+      grid_map.to_json().stringify()
     }
   }
-  sb.write_string("]}")
-  sb.to_string()
 }
 
 ///|
@@ -109,31 +125,66 @@ fn fill_grid_ascii(grid : Grid) -> Unit {
 }
 
 ///|
-/// Compare old (Map/Json) vs new (StringBuilder) for 24×80 ASCII grid.
-test "bench/grid_json_24x80" (b : @bench.T) {
+/// Compare full vs diff for 24×80: full grid dirty (worst case for diff).
+test "bench/grid_json_24x80_full" (b : @bench.T) {
   let grid = Grid::new(24, 80)
   fill_grid_ascii(grid)
-  b.bench(name="old_map_json", fn() { b.keep(serialize_grid_json_old(grid)) })
-  b.bench(name="new_stringbuilder", fn() { b.keep(serialize_grid_json(grid)) })
+  b.bench(name="full", fn() {
+    grid.mark_all_dirty()
+    b.keep(serialize_grid_json(grid))
+  })
+  b.bench(name="diff_full_dirty", fn() {
+    grid.mark_all_dirty()
+    b.keep(serialize_grid_json_diff(grid))
+  })
 }
 
 ///|
-/// Compare for empty 24×80 grid.
-test "bench/grid_json_empty_24x80" (b : @bench.T) {
+/// Diff for single character typed (dirty rect = 1 cell).
+test "bench/grid_json_24x80_single_cell" (b : @bench.T) {
   let grid = Grid::new(24, 80)
-  b.bench(
-    name="old_map_json", fn() { b.keep(serialize_grid_json_old(grid)) },
-  )
-  b.bench(name="new_stringbuilder", fn() { b.keep(serialize_grid_json(grid)) })
+  fill_grid_ascii(grid)
+  b.bench(name="full", fn() {
+    grid.mark_all_dirty()
+    b.keep(serialize_grid_json(grid))
+  })
+  b.bench(name="diff_1_cell", fn() {
+    grid.mark_all_clean()
+    grid.mark_dirty(5, 10)
+    b.keep(serialize_grid_json_diff(grid))
+  })
 }
 
 ///|
-/// Compare for larger 50×120 grid.
-test "bench/grid_json_50x120" (b : @bench.T) {
-  let grid = Grid::new(50, 120)
+/// Diff for a line of text typed (dirty rect = 1 row x ~20 cols).
+test "bench/grid_json_24x80_one_line" (b : @bench.T) {
+  let grid = Grid::new(24, 80)
   fill_grid_ascii(grid)
-  b.bench(name="old_map_json", fn() { b.keep(serialize_grid_json_old(grid)) })
-  b.bench(name="new_stringbuilder", fn() { b.keep(serialize_grid_json(grid)) })
+  b.bench(name="full", fn() {
+    grid.mark_all_dirty()
+    b.keep(serialize_grid_json(grid))
+  })
+  b.bench(name="diff_1_line", fn() {
+    grid.mark_all_clean()
+    grid.mark_dirty(5, 0)
+    grid.mark_dirty(5, 79)
+    b.keep(serialize_grid_json_diff(grid))
+  })
+}
+
+///|
+/// Diff for nothing dirty (cursor blink, no content change).
+test "bench/grid_json_24x80_nothing_dirty" (b : @bench.T) {
+  let grid = Grid::new(24, 80)
+  fill_grid_ascii(grid)
+  b.bench(name="full", fn() {
+    grid.mark_all_dirty()
+    b.keep(serialize_grid_json(grid))
+  })
+  b.bench(name="diff_nothing", fn() {
+    grid.mark_all_clean()
+    b.keep(serialize_grid_json_diff(grid))
+  })
 }
 
 // ========== print_char ==========

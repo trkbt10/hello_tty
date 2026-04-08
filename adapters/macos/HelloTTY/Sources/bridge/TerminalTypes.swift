@@ -39,8 +39,19 @@ struct TerminalGrid {
         var isInverse: Bool { attrs & 16 != 0 }
     }
 
+    /// Dirty region info from differential updates.
+    enum DirtyRegion {
+        case all                          // Full grid update
+        case none                         // Nothing changed
+        case rect(top: Int, left: Int, bottom: Int, right: Int) // Partial update
+    }
+
+    /// The dirty region for this grid update.
+    var dirty: DirtyRegion = .all
+
     /// Parse from JSON string produced by ffi_get_grid().
     /// Colors are pre-resolved as [r,g,b] by MoonBit — no theme needed.
+    /// Supports differential updates: "dirty" field indicates the changed region.
     static func fromJSON(_ jsonStr: String) -> TerminalGrid? {
         guard let data = jsonStr.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -56,6 +67,20 @@ struct TerminalGrid {
             visible: cursorObj["visible"] as? Bool ?? true,
             style: CursorStyle(rawValue: cursorObj["style"] as? String ?? "block") ?? .block
         )
+
+        // Parse dirty region
+        let dirty: DirtyRegion
+        if let dirtyStr = obj["dirty"] as? String {
+            if dirtyStr == "all" {
+                dirty = .all
+            } else {
+                dirty = .none
+            }
+        } else if let dirtyArr = obj["dirty"] as? [Int], dirtyArr.count == 4 {
+            dirty = .rect(top: dirtyArr[0], left: dirtyArr[1], bottom: dirtyArr[2], right: dirtyArr[3])
+        } else {
+            dirty = .all
+        }
 
         let cellsArray = obj["cells"] as? [[String: Any]] ?? []
         let cells = cellsArray.compactMap { cellObj -> CellData? in
@@ -73,7 +98,9 @@ struct TerminalGrid {
             return CellData(row: r, col: c, char: firstChar, width: width, fg: fg, bg: bg, attrs: attrs)
         }
 
-        return TerminalGrid(rows: rows, cols: cols, cursor: cursor, cells: cells)
+        var grid = TerminalGrid(rows: rows, cols: cols, cursor: cursor, cells: cells)
+        grid.dirty = dirty
+        return grid
     }
 
     /// Parse an [r, g, b] array to NSColor. Falls back to white/black.

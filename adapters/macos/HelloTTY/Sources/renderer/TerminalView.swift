@@ -227,10 +227,45 @@ class TerminalState: ObservableObject {
         }
     }
 
-    /// Fetch the full grid (called on-demand by CPU renderer).
+    /// Fetch the grid with differential updates.
+    /// On partial updates, merges new cells into the existing grid.
+    /// On full updates or first fetch, replaces the grid entirely.
     func fetchGrid() -> TerminalGrid? {
         if gridDirty {
-            grid = bridge.getGrid()
+            if let newGrid = bridge.getGrid() {
+                switch newGrid.dirty {
+                case .none:
+                    // Nothing changed — keep existing grid, just update cursor
+                    if var existing = grid {
+                        existing = TerminalGrid(
+                            rows: existing.rows, cols: existing.cols,
+                            cursor: newGrid.cursor, cells: existing.cells)
+                        grid = existing
+                    }
+
+                case .all:
+                    // Full update — replace entirely
+                    grid = newGrid
+
+                case .rect(let top, let left, let bottom, let right):
+                    if var existing = grid,
+                       existing.rows == newGrid.rows && existing.cols == newGrid.cols {
+                        // Remove old cells in the dirty rect
+                        var kept = existing.cells.filter { cell in
+                            !(cell.row >= top && cell.row <= bottom &&
+                              cell.col >= left && cell.col <= right)
+                        }
+                        // Add new cells from the dirty rect
+                        kept.append(contentsOf: newGrid.cells)
+                        grid = TerminalGrid(
+                            rows: existing.rows, cols: existing.cols,
+                            cursor: newGrid.cursor, cells: kept)
+                    } else {
+                        // Grid size changed — can't merge, treat as full
+                        grid = newGrid
+                    }
+                }
+            }
             gridDirty = false
         }
         return grid

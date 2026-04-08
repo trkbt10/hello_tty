@@ -9,6 +9,14 @@ pub struct Grid {
   mut scroll_top : Int
   /// Scroll region bottom (inclusive, 0-based).
   mut scroll_bottom : Int
+  /// Dirty bounding box — tracks the minimal rectangle of changed cells.
+  /// Reset after each render. (-1,-1,-1,-1) means clean.
+  mut dirty_top : Int
+  mut dirty_bottom : Int
+  mut dirty_left : Int
+  mut dirty_right : Int
+  /// Whether the entire grid is dirty (e.g. after scroll, clear, resize).
+  mut dirty_all : Bool
 } derive(Show)
 
 ///|
@@ -18,7 +26,18 @@ pub fn Grid::new(rows : Int, cols : Int) -> Grid {
   for _i in 0..<rows {
     lines.push(Row::new(cols))
   }
-  { rows, cols, lines, scroll_top: 0, scroll_bottom: rows - 1 }
+  {
+    rows,
+    cols,
+    lines,
+    scroll_top: 0,
+    scroll_bottom: rows - 1,
+    dirty_top: -1,
+    dirty_bottom: -1,
+    dirty_left: -1,
+    dirty_right: -1,
+    dirty_all: true,
+  }
 }
 
 ///|
@@ -42,6 +61,7 @@ pub fn Grid::set_cell(
   cell.bg = pen.bg
   cell.attrs.flags = pen.attrs.flags
   self.lines[row].dirty = true
+  self.mark_dirty(row, col)
 }
 
 ///|
@@ -61,35 +81,31 @@ pub fn Grid::set_cell_with_width(
   cell.attrs.flags = pen.attrs.flags
   cell.width = width
   self.lines[row].dirty = true
+  self.mark_dirty(row, col)
+  // Wide char spans 2 cells
+  if width == 2 && col + 1 < self.cols {
+    self.mark_dirty(row, col + 1)
+  }
 }
 
 ///|
 /// Clear wide character fragments when overwriting.
-///
-/// If the cell at (row, col) is:
-///   - A continuation cell (width=0): the preceding cell is the head of a
-///     wide character. Reset the head to a space with width=1.
-///   - A wide character head (width=2): the next cell is a continuation.
-///     Reset the continuation to empty with width=1.
-///
-/// This prevents rendering artifacts when a narrow character overwrites
-/// part of a wide character.
 pub fn Grid::clear_wide_char_at(self : Grid, row : Int, col : Int) -> Unit {
   let cell = self.lines[row].get(col)
   if cell.width == 0 && col > 0 {
-    // This is a continuation cell — clear the head
     let head = self.lines[row].get(col - 1)
     if head.width == 2 {
       head.char = ' '
       head.width = 1
+      self.mark_dirty(row, col - 1)
     }
   }
   if cell.width == 2 && col + 1 < self.cols {
-    // This is a wide head — clear the continuation
     let cont = self.lines[row].get(col + 1)
     if cont.width == 0 {
       cont.char = '\u0000'
       cont.width = 1
+      self.mark_dirty(row, col + 1)
     }
   }
   self.lines[row].dirty = true
@@ -101,6 +117,7 @@ pub fn Grid::clear(self : Grid) -> Unit {
   for i in 0..<self.rows {
     self.lines[i].clear()
   }
+  self.mark_all_dirty()
 }
 
 ///|
@@ -110,6 +127,7 @@ pub fn Grid::clear_rows(self : Grid, from : Int, to : Int) -> Unit {
   let end = to.clamp(min=0, max=self.rows)
   for i in start..<end {
     self.lines[i].clear()
+    self.mark_row_dirty(i)
   }
 }
 
@@ -123,6 +141,10 @@ pub fn Grid::clear_cells(self : Grid, row : Int, from : Int, to : Int) -> Unit {
     line.cells[i].reset()
   }
   line.dirty = true
+  if start < end {
+    self.mark_dirty(row, start)
+    self.mark_dirty(row, end - 1)
+  }
 }
 
 ///|
@@ -145,6 +167,7 @@ pub fn Grid::scroll_up(self : Grid, n : Int) -> Array[Row] {
   for i in self.scroll_top..<=self.scroll_bottom {
     self.lines[i].dirty = true
   }
+  self.mark_all_dirty()
   scrolled_off
 }
 
@@ -163,6 +186,7 @@ pub fn Grid::scroll_down(self : Grid, n : Int) -> Unit {
   for i in self.scroll_top..<=self.scroll_bottom {
     self.lines[i].dirty = true
   }
+  self.mark_all_dirty()
 }
 
 ///|
@@ -205,6 +229,7 @@ pub fn Grid::resize(self : Grid, new_rows : Int, new_cols : Int) -> Unit {
   self.cols = new_cols
   self.scroll_top = 0
   self.scroll_bottom = new_rows - 1
+  self.mark_all_dirty()
 }
 
 ///|
@@ -226,6 +251,7 @@ pub fn Grid::insert_lines(self : Grid, at_row : Int, n : Int) -> Unit {
   for i in at_row..<=self.scroll_bottom {
     self.lines[i].dirty = true
   }
+  self.mark_all_dirty()
 }
 
 ///|
@@ -243,6 +269,7 @@ pub fn Grid::delete_lines(self : Grid, at_row : Int, n : Int) -> Unit {
   for i in at_row..<=self.scroll_bottom {
     self.lines[i].dirty = true
   }
+  self.mark_all_dirty()
 }
 
 ///|
@@ -252,12 +279,11 @@ pub fn Grid::insert_cells(self : Grid, row : Int, col : Int, n : Int) -> Unit {
   let line = self.lines[row]
   let count = n.clamp(min=0, max=self.cols - col)
   for _i in 0..<count {
-    // Remove the last cell
     line.cells.pop() |> ignore
-    // Insert blank cell at the cursor position
     line.cells.insert(col, Cell::empty())
   }
   line.dirty = true
+  self.mark_row_dirty(row)
 }
 
 ///|
@@ -271,6 +297,49 @@ pub fn Grid::delete_cells(self : Grid, row : Int, col : Int, n : Int) -> Unit {
     line.cells.push(Cell::empty())
   }
   line.dirty = true
+  self.mark_row_dirty(row)
+}
+
+///|
+/// Expand the dirty bounding box to include the cell at (row, col).
+pub fn Grid::mark_dirty(self : Grid, row : Int, col : Int) -> Unit {
+  if self.dirty_top < 0 {
+    self.dirty_top = row
+    self.dirty_bottom = row
+    self.dirty_left = col
+    self.dirty_right = col
+  } else {
+    if row < self.dirty_top { self.dirty_top = row }
+    if row > self.dirty_bottom { self.dirty_bottom = row }
+    if col < self.dirty_left { self.dirty_left = col }
+    if col > self.dirty_right { self.dirty_right = col }
+  }
+}
+
+///|
+/// Expand the dirty bounding box to include an entire row.
+pub fn Grid::mark_row_dirty(self : Grid, row : Int) -> Unit {
+  self.mark_dirty(row, 0)
+  self.mark_dirty(row, self.cols - 1)
+}
+
+///|
+/// Mark the entire grid as dirty.
+pub fn Grid::mark_all_dirty(self : Grid) -> Unit {
+  self.dirty_all = true
+}
+
+///|
+/// Get the dirty bounding box: (top, left, bottom, right).
+/// Returns None if nothing is dirty.
+pub fn Grid::get_dirty_rect(self : Grid) -> (Int, Int, Int, Int)? {
+  if self.dirty_all {
+    return Some((0, 0, self.rows - 1, self.cols - 1))
+  }
+  if self.dirty_top < 0 {
+    return None
+  }
+  Some((self.dirty_top, self.dirty_left, self.dirty_bottom, self.dirty_right))
 }
 
 ///|
@@ -279,15 +348,18 @@ pub fn Grid::mark_all_clean(self : Grid) -> Unit {
   for i in 0..<self.rows {
     self.lines[i].dirty = false
   }
+  self.dirty_top = -1
+  self.dirty_bottom = -1
+  self.dirty_left = -1
+  self.dirty_right = -1
+  self.dirty_all = false
 }
 
 ///|
 /// Check if any row is dirty.
 pub fn Grid::has_dirty_rows(self : Grid) -> Bool {
-  for i in 0..<self.rows {
-    if self.lines[i].dirty {
-      return true
-    }
+  if self.dirty_all || self.dirty_top >= 0 {
+    return true
   }
   false
 }

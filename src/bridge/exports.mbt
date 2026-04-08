@@ -203,8 +203,11 @@ pub fn ffi_get_cursor() -> Bytes {
 /// Colors are FULLY RESOLVED using the theme — platform adapters receive
 /// only concrete RGB values, never palette indices or "default" markers.
 ///
-/// Uses direct StringBuilder to avoid Map/Json/stringify overhead.
-/// This function is on the hot path (called every refresh cycle).
+/// Supports differential updates: only cells within the dirty bounding box
+/// are serialized. The response includes "dirty" rect so the receiver knows
+/// which region was updated. "dirty":"all" means full grid.
+///
+/// After serialization, the dirty region is reset.
 pub fn ffi_get_grid() -> Bytes {
   match bridge_state.sessions.active_session() {
     Some(session) => {
@@ -212,8 +215,41 @@ pub fn ffi_get_grid() -> Bytes {
       let grid = terminal.get_grid()
       let cursor = terminal.get_cursor()
       let theme = bridge_state.theme
-      // Pre-size: ~20 bytes per empty cell skip, ~80 bytes per cell with content
-      let sb = StringBuilder::new(size_hint=grid.rows * grid.cols * 20)
+      // Determine dirty region
+      let (dr_top, dr_left, dr_bottom, dr_right, is_full) = match grid.get_dirty_rect() {
+        Some((t, l, b, r)) => {
+          let full = grid.dirty_all
+          (t, l, b, r, full)
+        }
+        None =>
+          // Nothing dirty — return minimal response
+          {
+            let sb = StringBuilder::new(size_hint=128)
+            sb.write_string("{\"rows\":")
+            sb.write_string(grid.rows.to_string())
+            sb.write_string(",\"cols\":")
+            sb.write_string(grid.cols.to_string())
+            sb.write_string(",\"cursor\":{\"row\":")
+            sb.write_string(cursor.row.to_string())
+            sb.write_string(",\"col\":")
+            sb.write_string(cursor.col.to_string())
+            sb.write_string(",\"visible\":")
+            sb.write_string(if cursor.visible { "true" } else { "false" })
+            sb.write_string(",\"style\":\"")
+            sb.write_string(
+              match cursor.style {
+                Block => "block"
+                Underline => "underline"
+                Bar => "bar"
+              },
+            )
+            sb.write_string("\"},\"dirty\":\"none\",\"cells\":[]}")
+            result_buf.result_bytes = @utf8.encode(sb.to_string())
+            return result_buf.result_bytes
+          }
+      }
+      let cells_in_rect = (dr_bottom - dr_top + 1) * (dr_right - dr_left + 1)
+      let sb = StringBuilder::new(size_hint=cells_in_rect * 80 + 200)
       sb.write_string("{\"rows\":")
       sb.write_string(grid.rows.to_string())
       sb.write_string(",\"cols\":")
@@ -232,11 +268,25 @@ pub fn ffi_get_grid() -> Bytes {
           Bar => "bar"
         },
       )
-      sb.write_string("\"},\"cells\":[")
+      // Dirty region info
+      if is_full {
+        sb.write_string("\"},\"dirty\":\"all\"")
+      } else {
+        sb.write_string("\"},\"dirty\":[")
+        sb.write_string(dr_top.to_string())
+        sb.write_char(',')
+        sb.write_string(dr_left.to_string())
+        sb.write_char(',')
+        sb.write_string(dr_bottom.to_string())
+        sb.write_char(',')
+        sb.write_string(dr_right.to_string())
+        sb.write_char(']')
+      }
+      sb.write_string(",\"cells\":[")
       let mut first = true
-      for row in 0..<grid.rows {
+      for row in dr_top..=dr_bottom {
         let line = grid.lines[row]
-        for col in 0..<grid.cols {
+        for col in dr_left..=dr_right {
           let cell = line.get(col)
           if cell.char == '\u0000' {
             continue
@@ -246,7 +296,6 @@ pub fn ffi_get_grid() -> Bytes {
           } else {
             sb.write_char(',')
           }
-          // Resolve colors using theme (SoT)
           let mut fg_color = cell.fg
           let mut bg_color = cell.bg
           if cell.attrs.has(@terminal.attr_inverse) {
@@ -282,6 +331,8 @@ pub fn ffi_get_grid() -> Bytes {
         }
       }
       sb.write_string("]}")
+      // Reset dirty state after serialization
+      grid.mark_all_clean()
       result_buf.result_bytes = @utf8.encode(sb.to_string())
       result_buf.result_bytes
     }

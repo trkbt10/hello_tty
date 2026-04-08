@@ -14,6 +14,7 @@ fn main {
   let _r3 = @bridge.ffi_handle_key(key, mods)
   let _r4 = @bridge.ffi_resize(rows, cols)
   let _r5 = @bridge.ffi_get_title()
+  let _r5b = @bridge.ffi_get_cursor()
   let _r6 = @bridge.ffi_get_grid()
   let _r7 = @bridge.ffi_get_modes()
   let _r8 = @bridge.ffi_focus_event(gained)
