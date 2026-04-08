@@ -75,6 +75,7 @@ DYLIB_FLAGS   := -dynamiclib -install_name @rpath/libhello_tty.dylib
 .PHONY: all check test build \
         debug-headless debug-macos debug-pty debug-bridge debug-interactive \
         self-test-macos \
+        gen-bridge-lib check-stubs \
         vendor-wgpu dylib swift names \
         clean clean-moon clean-swift \
         info
@@ -90,12 +91,20 @@ check:
 	moon check --target native
 
 ## Full native build
-build:
+build: gen-bridge-lib
 	moon build --target native
 
 ## Run tests
 test:
 	moon test --target native
+
+## Re-generate cmd/bridge_lib/main.mbt from exports.mbt (ensures all FFI symbols are linked)
+gen-bridge-lib:
+	@scripts/gen_bridge_lib.sh
+
+## Verify C stub mangled names match generated symbols (run after build)
+check-stubs: build
+	@scripts/gen_bridge_lib.sh --check
 
 # ============================================================
 # Debug runs

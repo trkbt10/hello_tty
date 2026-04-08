@@ -61,6 +61,13 @@ class MoonBitBridge {
     private typealias HandleKeyForFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
     private typealias ResizeSessionFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
 
+    // Shell Integration (OSC 133 Semantic Prompt)
+    private typealias GetInputRegionFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
+    private typealias GetInputRegionForFn = @convention(c) (UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
+    private typealias IsInInputRegionFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
+    private typealias CursorMoveSequenceFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
+    private typealias SetFeatureFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
+
     // Viewport / Scrollback
     private typealias ScrollViewportFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
     private typealias ResetViewportFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
@@ -142,6 +149,13 @@ class MoonBitBridge {
     private var fnGetGridFor: GetGridForFn?
     private var fnHandleKeyFor: HandleKeyForFn?
     private var fnResizeSession: ResizeSessionFn?
+
+    // Shell Integration (OSC 133)
+    private var fnGetInputRegion: GetInputRegionFn?
+    private var fnGetInputRegionFor: GetInputRegionForFn?
+    private var fnIsInInputRegion: IsInInputRegionFn?
+    private var fnCursorMoveSequence: CursorMoveSequenceFn?
+    private var fnSetFeature: SetFeatureFn?
 
     // Viewport / Scrollback
     private var fnScrollViewportUp: ScrollViewportFn?
@@ -311,6 +325,13 @@ class MoonBitBridge {
         fnGetGridFor = sym("hello_tty_get_grid_for")
         fnHandleKeyFor = sym("hello_tty_handle_key_for")
         fnResizeSession = sym("hello_tty_resize_session")
+
+        // Shell Integration (OSC 133)
+        fnGetInputRegion = sym("hello_tty_get_input_region")
+        fnGetInputRegionFor = sym("hello_tty_get_input_region_for")
+        fnIsInInputRegion = sym("hello_tty_is_in_input_region")
+        fnCursorMoveSequence = sym("hello_tty_cursor_move_sequence")
+        fnSetFeature = sym("hello_tty_set_feature")
 
         // Viewport / Scrollback
         fnScrollViewportUp = sym("hello_tty_scroll_viewport_up")
@@ -975,6 +996,52 @@ class MoonBitBridge {
               let col = Int(parts[1])
         else { return (0, 0) }
         return (row, col)
+    }
+
+    // MARK: - Shell Integration (OSC 133 Input Region)
+
+    /// Test whether a grid cell is within the shell input region (MoonBit SoT).
+    /// Returns true only when shell_integration feature is enabled and the cell
+    /// falls within the current command input span.
+    func isInInputRegion(sessionId: Int32, row: Int, col: Int) -> Bool {
+        guard let fn = fnIsInInputRegion else { return false }
+        return "\(sessionId)".withCString { s in
+            "\(row)".withCString { r in
+                "\(col)".withCString { c in fn(s, r, c) }
+            }
+        } == 1
+    }
+
+    /// Generate arrow key escape sequences to move the shell cursor to (row, col).
+    /// MoonBit computes the delta from the current cursor position and generates
+    /// the correct sequences (respecting application cursor key mode).
+    /// Returns nil if the target is outside the input region.
+    func cursorMoveSequence(sessionId: Int32, row: Int, col: Int) -> String? {
+        guard let fn = fnCursorMoveSequence else { return nil }
+        let ptr = "\(sessionId)".withCString { s in
+            "\(row)".withCString { r in
+                "\(col)".withCString { c in fn(s, r, c) }
+            }
+        }
+        guard let ptr = ptr else { return nil }
+        defer { fnFreeString?(ptr) }
+        let result = String(cString: ptr)
+        return result.isEmpty ? nil : result
+    }
+
+    /// Set a terminal feature flag (MoonBit SoT).
+    /// - Parameters:
+    ///   - sessionId: Target session
+    ///   - name: Feature name (e.g., "shell_integration")
+    ///   - enabled: Whether to enable or disable
+    @discardableResult
+    func setFeature(sessionId: Int32, name: String, enabled: Bool) -> Int32 {
+        guard let fn = fnSetFeature else { return -1 }
+        return "\(sessionId)".withCString { s in
+            name.withCString { n in
+                (enabled ? "1" : "0").withCString { e in fn(s, n, e) }
+            }
+        }
     }
 
     // MARK: - Panel Resize Notification

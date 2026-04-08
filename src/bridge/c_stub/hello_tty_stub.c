@@ -87,6 +87,13 @@
 #define mbt_ffi_handle_key_for    _M0FP47trkbt1010hello__tty3src6bridge21ffi__handle__key__for
 #define mbt_ffi_resize_session    _M0FP47trkbt1010hello__tty3src6bridge20ffi__resize__session
 
+// Shell Integration (OSC 133 Semantic Prompt)
+#define mbt_ffi_get_input_region     _M0FP47trkbt1010hello__tty3src6bridge23ffi__get__input__region
+#define mbt_ffi_get_input_region_for _M0FP47trkbt1010hello__tty3src6bridge28ffi__get__input__region__for
+#define mbt_ffi_is_in_input_region   _M0FP47trkbt1010hello__tty3src6bridge26ffi__is__in__input__region
+#define mbt_ffi_cursor_move_sequence _M0FP47trkbt1010hello__tty3src6bridge27ffi__cursor__move__sequence
+#define mbt_ffi_set_feature          _M0FP47trkbt1010hello__tty3src6bridge17ffi__set__feature
+
 // Viewport / Scrollback
 #define mbt_ffi_scroll_viewport_up    _M0FP47trkbt1010hello__tty3src6bridge25ffi__scroll__viewport__up
 #define mbt_ffi_scroll_viewport_down  _M0FP47trkbt1010hello__tty3src6bridge27ffi__scroll__viewport__down
@@ -171,6 +178,13 @@ extern int32_t         mbt_ffi_process_output_for(moonbit_bytes_t session_id, mo
 extern moonbit_bytes_t mbt_ffi_get_grid_for(moonbit_bytes_t session_id);
 extern moonbit_bytes_t mbt_ffi_handle_key_for(moonbit_bytes_t session_id, moonbit_bytes_t key, moonbit_bytes_t mods);
 extern int32_t         mbt_ffi_resize_session(moonbit_bytes_t session_id, moonbit_bytes_t rows, moonbit_bytes_t cols);
+
+// Shell Integration (OSC 133)
+extern moonbit_bytes_t mbt_ffi_get_input_region(void);
+extern moonbit_bytes_t mbt_ffi_get_input_region_for(moonbit_bytes_t session_id);
+extern int32_t         mbt_ffi_is_in_input_region(moonbit_bytes_t session_id, moonbit_bytes_t row, moonbit_bytes_t col);
+extern moonbit_bytes_t mbt_ffi_cursor_move_sequence(moonbit_bytes_t session_id, moonbit_bytes_t row, moonbit_bytes_t col);
+extern int32_t         mbt_ffi_set_feature(moonbit_bytes_t session_id, moonbit_bytes_t name, moonbit_bytes_t enabled);
 
 // Viewport / Scrollback
 extern int32_t         mbt_ffi_scroll_viewport_up(moonbit_bytes_t session_id, moonbit_bytes_t lines);
@@ -549,6 +563,46 @@ int32_t hello_tty_resize_session(const char *session_id, const char *rows, const
     moonbit_bytes_t rb = cstr_to_moonbit_bytes(rows);
     moonbit_bytes_t cb = cstr_to_moonbit_bytes(cols);
     return mbt_ffi_resize_session(sb, rb, cb);
+}
+
+// ---------- Shell Integration (OSC 133 Semantic Prompt) ----------
+
+char *hello_tty_get_input_region(void) {
+    ensure_init();
+    moonbit_bytes_t result = mbt_ffi_get_input_region();
+    return moonbit_bytes_to_cstr(result);
+}
+
+char *hello_tty_get_input_region_for(const char *session_id) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    moonbit_bytes_t result = mbt_ffi_get_input_region_for(sb);
+    return moonbit_bytes_to_cstr(result);
+}
+
+int32_t hello_tty_is_in_input_region(const char *session_id, const char *row, const char *col) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    moonbit_bytes_t rb = cstr_to_moonbit_bytes(row);
+    moonbit_bytes_t cb = cstr_to_moonbit_bytes(col);
+    return mbt_ffi_is_in_input_region(sb, rb, cb);
+}
+
+char *hello_tty_cursor_move_sequence(const char *session_id, const char *row, const char *col) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    moonbit_bytes_t rb = cstr_to_moonbit_bytes(row);
+    moonbit_bytes_t cb = cstr_to_moonbit_bytes(col);
+    moonbit_bytes_t result = mbt_ffi_cursor_move_sequence(sb, rb, cb);
+    return moonbit_bytes_to_cstr(result);
+}
+
+int32_t hello_tty_set_feature(const char *session_id, const char *name, const char *enabled) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    moonbit_bytes_t nb = cstr_to_moonbit_bytes(name);
+    moonbit_bytes_t eb = cstr_to_moonbit_bytes(enabled);
+    return mbt_ffi_set_feature(sb, nb, eb);
 }
 
 // ---------- Viewport / Scrollback ----------

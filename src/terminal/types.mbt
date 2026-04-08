@@ -152,3 +152,75 @@ pub fn TermModes::default() -> TermModes {
     insert_mode: false,
   }
 }
+
+///|
+/// Terminal feature flags.
+///
+/// Controls which optional capabilities are active. These are set by
+/// the host application (via FFI) and checked by the terminal engine
+/// when processing events.
+///
+/// Unlike TermModes (which are set by escape sequences from the shell),
+/// features are set by the embedding application to express its intent.
+pub struct TerminalFeatures {
+  /// Enable OSC 133 shell integration.
+  /// When true, the terminal tracks semantic prompt regions and exposes
+  /// input-region APIs for click-to-move-cursor and similar affordances.
+  mut shell_integration : Bool
+} derive(Show)
+
+///|
+pub fn TerminalFeatures::default() -> TerminalFeatures {
+  { shell_integration: false }
+}
+
+///|
+/// Semantic prompt state tracked via OSC 133.
+///
+/// OSC 133 sequences mark semantic regions in the terminal:
+///   A — Prompt start (shell is about to draw its prompt)
+///   B — Command start (user input begins after the prompt)
+///   C — Command execution (command output begins)
+///   D;N — Command finished with exit code N
+///
+/// We track the prompt/input region so the terminal can offer
+/// text-editor-like affordances (click to place cursor, drag to select)
+/// within the user's input line.
+pub(all) enum PromptState {
+  /// No semantic prompt information available.
+  Inactive
+  /// Prompt is being drawn (after A, before B).
+  PromptDrawing
+  /// User is typing a command (after B, before C/D).
+  /// The input region spans from (command_start_row, command_start_col)
+  /// to the current cursor position.
+  CommandInput
+  /// Command output is being displayed (after C, before next A/D).
+  CommandOutput
+} derive(Show, Eq)
+
+///|
+/// Semantic prompt tracking data (OSC 133 shell integration).
+pub struct SemanticPrompt {
+  /// Current prompt state.
+  mut state : PromptState
+  /// Row where the prompt starts (set by OSC 133;A).
+  mut prompt_start_row : Int
+  /// Row/col where user input begins (set by OSC 133;B).
+  /// This is the position right after the prompt string (e.g., after "$ ").
+  mut command_start_row : Int
+  mut command_start_col : Int
+  /// Exit code of the last completed command (set by OSC 133;D;N).
+  mut last_exit_code : Int
+} derive(Show)
+
+///|
+pub fn SemanticPrompt::new() -> SemanticPrompt {
+  {
+    state: Inactive,
+    prompt_start_row: 0,
+    command_start_row: 0,
+    command_start_col: 0,
+    last_exit_code: 0,
+  }
+}

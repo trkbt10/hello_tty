@@ -14,6 +14,10 @@ pub struct Terminal {
   /// Viewport scroll offset for scrollback viewing.
   /// 0 = live (showing the current grid), >0 = scrolled back N lines into history.
   mut viewport_offset : Int
+  /// Feature flags (set by the host application).
+  features : TerminalFeatures
+  /// Semantic prompt tracking (OSC 133 shell integration).
+  semantic_prompt : SemanticPrompt
 }
 
 ///|
@@ -38,6 +42,8 @@ pub fn Terminal::new(
     rows,
     cols,
     viewport_offset: 0,
+    features: TerminalFeatures::default(),
+    semantic_prompt: SemanticPrompt::new(),
   }
 }
 
@@ -100,7 +106,7 @@ fn Terminal::print_char(self : Terminal, c : Char) -> Unit {
     if self.modes.auto_wrap {
       cursor.col = 0
       if cursor.row == grid.scroll_bottom {
-        self.screen.scroll_up(1)
+        self.scroll_up_tracked(1)
       } else if cursor.row < self.rows - 1 {
         cursor.row += 1
       }
@@ -117,7 +123,7 @@ fn Terminal::print_char(self : Terminal, c : Char) -> Unit {
       grid.set_cell_with_width(cursor.row, cursor.col, ' ', cursor.pen, 1)
       cursor.col = 0
       if cursor.row == grid.scroll_bottom {
-        self.screen.scroll_up(1)
+        self.scroll_up_tracked(1)
       } else if cursor.row < self.rows - 1 {
         cursor.row += 1
       }
@@ -190,7 +196,7 @@ fn Terminal::handle_control(self : Terminal, byte : Byte) -> Unit {
     0x0A | 0x0B | 0x0C => {
       // LF, VT, FF — line feed
       if cursor.row == grid.scroll_bottom {
-        self.screen.scroll_up(1)
+        self.scroll_up_tracked(1)
       } else if cursor.row < self.rows - 1 {
         cursor.row += 1
       }
@@ -342,7 +348,7 @@ fn Terminal::handle_csi(self : Terminal, cmd : @vt_parser.CsiCommand) -> Unit {
     0x53 => {
       // SU — Scroll Up
       let n = param(0, 1)
-      self.screen.scroll_up(n)
+      self.scroll_up_tracked(n)
     }
     0x54 => {
       // SD — Scroll Down
@@ -619,7 +625,7 @@ fn Terminal::handle_esc(self : Terminal, cmd : @vt_parser.EscCommand) -> Unit {
         // IND — Index (move cursor down, scroll if at bottom)
         let grid = self.screen.active_grid()
         if cursor.row == grid.scroll_bottom {
-          self.screen.scroll_up(1)
+          self.scroll_up_tracked(1)
         } else if cursor.row < self.rows - 1 {
           cursor.row += 1
         }
@@ -629,7 +635,7 @@ fn Terminal::handle_esc(self : Terminal, cmd : @vt_parser.EscCommand) -> Unit {
         let grid = self.screen.active_grid()
         cursor.col = 0
         if cursor.row == grid.scroll_bottom {
-          self.screen.scroll_up(1)
+          self.scroll_up_tracked(1)
         } else if cursor.row < self.rows - 1 {
           cursor.row += 1
         }
@@ -721,7 +727,65 @@ fn Terminal::handle_osc(self : Terminal, cmd : @vt_parser.OscCommand) -> Unit {
   match num {
     0 | 2 => self.title = text // Set window title
     1 => () // Set icon name (usually ignored)
+    133 => self.handle_osc_133(text)
     _ => () // Other OSC commands
+  }
+}
+
+///|
+/// Handle OSC 133 (Semantic Prompt / Shell Integration).
+///
+/// Subcommands:
+///   A — Prompt start: the shell is about to draw its prompt
+///   B — Command start: user input begins (prompt is complete)
+///   C — Command executed: output begins
+///   D[;N] — Command finished with exit code N (default 0)
+fn Terminal::handle_osc_133(self : Terminal, text : String) -> Unit {
+  // Only process when shell integration feature is enabled
+  if not(self.features.shell_integration) {
+    return
+  }
+  // Only track on primary screen — ignore in alternate screen (vim, less, etc.)
+  if self.screen.active != Primary {
+    return
+  }
+  if text.length() == 0 {
+    return
+  }
+  let subcommand = text[0]
+  match subcommand {
+    'A' => {
+      let cursor = self.screen.active_cursor()
+      self.semantic_prompt.state = PromptDrawing
+      self.semantic_prompt.prompt_start_row = cursor.row
+    }
+    'B' => {
+      let cursor = self.screen.active_cursor()
+      self.semantic_prompt.state = CommandInput
+      self.semantic_prompt.command_start_row = cursor.row
+      self.semantic_prompt.command_start_col = cursor.col
+    }
+    'C' => self.semantic_prompt.state = CommandOutput
+    'D' => {
+      // Parse exit code from ";N" if present
+      let exit_code = if text.length() >= 3 && text[1] == ';' {
+        let mut code = 0
+        for i in 2..<text.length() {
+          let c = text[i]
+          if c >= '0' && c <= '9' {
+            code = code * 10 + (c.to_int() - 0x30)
+          } else {
+            break
+          }
+        }
+        code
+      } else {
+        0
+      }
+      self.semantic_prompt.last_exit_code = exit_code
+      self.semantic_prompt.state = Inactive
+    }
+    _ => () // Unknown subcommand
   }
 }
 
@@ -743,6 +807,7 @@ pub fn Terminal::reset(self : Terminal) -> Unit {
     self.tab_stops[i] = i % 8 == 0
   }
   self.title = ""
+  self.semantic_prompt.state = Inactive
 }
 
 ///|
@@ -766,6 +831,9 @@ pub fn Terminal::resize(
       self.tab_stops.pop() |> ignore
     }
   }
+  // Invalidate semantic prompt — the shell will re-emit OSC 133;A
+  // when it redraws the prompt after resize.
+  self.semantic_prompt.state = Inactive
 }
 
 ///|
@@ -871,4 +939,159 @@ pub fn Terminal::get_viewport_row(self : Terminal, screen_row : Int) -> Row? {
     return Some(grid.lines[grid_index])
   }
   None
+}
+
+///|
+/// Scroll up with semantic prompt row tracking.
+/// When lines scroll off the top, the stored prompt/command rows must
+/// be decremented accordingly. If they scroll out of view, invalidate.
+fn Terminal::scroll_up_tracked(self : Terminal, n : Int) -> Unit {
+  self.screen.scroll_up(n)
+  if self.semantic_prompt.state != Inactive {
+    self.semantic_prompt.prompt_start_row -= n
+    self.semantic_prompt.command_start_row -= n
+    // If the prompt has scrolled completely off-screen, invalidate.
+    // The shell will re-emit OSC 133;A when the prompt is redrawn
+    // (e.g., after the user presses Enter and a new prompt appears).
+    if self.semantic_prompt.command_start_row < 0 {
+      self.semantic_prompt.state = Inactive
+    }
+  }
+}
+
+///|
+/// Get the current shell input region if the user is typing a command.
+///
+/// Returns `Some((start_row, start_col, end_row, end_col))` when the terminal
+/// is in CommandInput state (after OSC 133;B, before C/D).
+/// The region spans from the command start position to the current cursor.
+pub fn Terminal::get_input_region(
+  self : Terminal,
+) -> (Int, Int, Int, Int)? {
+  if self.semantic_prompt.state != CommandInput {
+    return None
+  }
+  let cursor = self.screen.active_cursor()
+  Some(
+    (
+      self.semantic_prompt.command_start_row,
+      self.semantic_prompt.command_start_col,
+      cursor.row,
+      cursor.col,
+    ),
+  )
+}
+
+///|
+/// Get the semantic prompt state.
+pub fn Terminal::get_semantic_prompt(self : Terminal) -> SemanticPrompt {
+  self.semantic_prompt
+}
+
+///|
+/// Get the terminal features.
+pub fn Terminal::get_features(self : Terminal) -> TerminalFeatures {
+  self.features
+}
+
+///|
+/// Set a terminal feature flag.
+pub fn Terminal::set_feature(
+  self : Terminal,
+  name : String,
+  enabled : Bool,
+) -> Unit {
+  match name {
+    "shell_integration" => self.features.shell_integration = enabled
+    _ => () // Unknown feature, ignored
+  }
+}
+
+///|
+/// Test whether a grid cell (row, col) is within the current shell input region.
+///
+/// Returns true only when shell_integration is enabled, the terminal is in
+/// CommandInput state, and the cell falls within the input span.
+pub fn Terminal::is_in_input_region(
+  self : Terminal,
+  row : Int,
+  col : Int,
+) -> Bool {
+  if not(self.features.shell_integration) {
+    return false
+  }
+  if self.semantic_prompt.state != CommandInput {
+    return false
+  }
+  let cursor = self.screen.active_cursor()
+  let sr = self.semantic_prompt.command_start_row
+  let sc = self.semantic_prompt.command_start_col
+  let er = cursor.row
+  let ec = cursor.col
+  // Single-line case
+  if sr == er {
+    return row == sr && col >= sc && col <= ec
+  }
+  // Multi-line case
+  if row == sr {
+    return col >= sc
+  }
+  if row == er {
+    return col <= ec
+  }
+  row > sr && row < er
+}
+
+///|
+/// Generate the escape sequence to move the shell cursor from its current
+/// position to the target cell (row, col) within the input region.
+///
+/// Returns the concatenated arrow key sequences, or empty string if the
+/// target is not in the input region or shell integration is disabled.
+///
+/// The caller should write the returned string directly to the PTY.
+pub fn Terminal::cursor_move_sequence(
+  self : Terminal,
+  target_row : Int,
+  target_col : Int,
+) -> String {
+  if not(self.features.shell_integration) {
+    return ""
+  }
+  if not(self.is_in_input_region(target_row, target_col)) {
+    return ""
+  }
+  let cursor = self.screen.active_cursor()
+  let cur_row = cursor.row
+  let cur_col = cursor.col
+  // Determine arrow key sequences based on cursor key mode
+  let app = self.modes.cursor_keys_application
+  let up = if app { "\x1bOA" } else { "\x1b[A" }
+  let down = if app { "\x1bOB" } else { "\x1b[B" }
+  let right = if app { "\x1bOC" } else { "\x1b[C" }
+  let left = if app { "\x1bOD" } else { "\x1b[D" }
+  let sb = StringBuilder::new(size_hint=64)
+  // Vertical movement
+  let row_delta = target_row - cur_row
+  if row_delta > 0 {
+    for _i in 0..<row_delta {
+      sb.write_string(down)
+    }
+  } else if row_delta < 0 {
+    for _i in 0..<-row_delta {
+      sb.write_string(up)
+    }
+  }
+  // Horizontal movement
+  let col_delta = target_col - cur_col
+  if col_delta > 0 {
+    for _i in 0..<col_delta {
+      sb.write_string(right)
+    }
+  } else if col_delta < 0 {
+    for _i in 0..<-col_delta {
+      sb.write_string(left)
+    }
+  }
+  sb.to_string()
 }

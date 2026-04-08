@@ -1045,3 +1045,289 @@ test "viewport/reset_clears_viewport_offset" {
   term.reset()
   assert_eq(term.get_viewport_offset(), 0)
 }
+
+// ========== OSC 133 (Semantic Prompt) ==========
+
+///|
+/// Helper: send OSC 133 subcommand via escape sequence.
+/// OSC 133;X is encoded as ESC ] 1 3 3 ; X BEL
+fn send_osc_133(term : Terminal, subcommand : String) -> Unit {
+  feed(term, "\x1b]133;" + subcommand + "\x07")
+}
+
+///|
+/// Helper: create a terminal with shell_integration enabled.
+fn term_with_shell_integration(
+  rows? : Int = 4,
+  cols? : Int = 20,
+) -> Terminal {
+  let term = Terminal::new(rows~, cols~)
+  term.set_feature("shell_integration", true)
+  term
+}
+
+///|
+test "osc133/feature_flag_gates_processing" {
+  // Without shell_integration enabled, OSC 133 should be ignored
+  let term = Terminal::new(rows=4, cols=20)
+  assert_eq(term.get_features().shell_integration, false)
+  send_osc_133(term, "A")
+  assert_eq(term.get_semantic_prompt().state, Inactive) // not changed
+  // Enable and try again
+  term.set_feature("shell_integration", true)
+  send_osc_133(term, "A")
+  assert_eq(term.get_semantic_prompt().state, PromptDrawing)
+}
+
+///|
+test "osc133/prompt_start_sets_state" {
+  let term = term_with_shell_integration()
+  assert_eq(term.get_semantic_prompt().state, Inactive)
+  send_osc_133(term, "A")
+  assert_eq(term.get_semantic_prompt().state, PromptDrawing)
+  assert_eq(term.get_semantic_prompt().prompt_start_row, 0)
+}
+
+///|
+test "osc133/command_input_tracks_position" {
+  let term = term_with_shell_integration()
+  // Simulate: prompt "$ " then B
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  assert_eq(term.get_semantic_prompt().state, CommandInput)
+  assert_eq(term.get_semantic_prompt().command_start_row, 0)
+  assert_eq(term.get_semantic_prompt().command_start_col, 2)
+}
+
+///|
+test "osc133/get_input_region_during_command_input" {
+  let term = term_with_shell_integration()
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  // User types "hello"
+  feed(term, "hello")
+  match term.get_input_region() {
+    Some((sr, sc, er, ec)) => {
+      assert_eq(sr, 0)
+      assert_eq(sc, 2)
+      assert_eq(er, 0)
+      assert_eq(ec, 7)
+    }
+    None => fail!("expected input region to be active")
+  }
+}
+
+///|
+test "osc133/no_input_region_during_output" {
+  let term = term_with_shell_integration()
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  feed(term, "ls")
+  send_osc_133(term, "C")
+  assert_eq(term.get_semantic_prompt().state, CommandOutput)
+  assert_eq(term.get_input_region(), None)
+}
+
+///|
+test "osc133/command_finished_with_exit_code" {
+  let term = term_with_shell_integration()
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  feed(term, "ls")
+  send_osc_133(term, "C")
+  send_osc_133(term, "D;0")
+  assert_eq(term.get_semantic_prompt().state, Inactive)
+  assert_eq(term.get_semantic_prompt().last_exit_code, 0)
+}
+
+///|
+test "osc133/command_finished_with_error_code" {
+  let term = term_with_shell_integration()
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  feed(term, "false")
+  send_osc_133(term, "C")
+  send_osc_133(term, "D;1")
+  assert_eq(term.get_semantic_prompt().last_exit_code, 1)
+}
+
+///|
+test "osc133/full_cycle_A_B_C_D_A" {
+  let term = term_with_shell_integration()
+  // First command cycle
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  feed(term, "echo hi")
+  send_osc_133(term, "C")
+  feed(term, "\r\nhi\r\n")
+  send_osc_133(term, "D;0")
+  // Second prompt
+  send_osc_133(term, "A")
+  assert_eq(term.get_semantic_prompt().state, PromptDrawing)
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  assert_eq(term.get_semantic_prompt().state, CommandInput)
+  // Input region is on the new line
+  match term.get_input_region() {
+    Some((sr, sc, _, _)) => {
+      // Row 0: "$ echo hi", Row 1: "hi", Row 2: second prompt "$ "
+      assert_eq(sr, 2)
+      assert_eq(sc, 2)
+    }
+    None => fail!("expected input region on second prompt")
+  }
+}
+
+///|
+test "osc133/scroll_adjusts_prompt_rows" {
+  let term = term_with_shell_integration()
+  // Fill screen to row 3
+  feed(term, "line1\r\nline2\r\nline3\r\n")
+  // Prompt on last row
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  let sp = term.get_semantic_prompt()
+  let row_before = sp.command_start_row
+  // Cause a scroll by printing a new line
+  feed(term, "cmd\r\noutput")
+  // After scroll, prompt rows should have decreased
+  assert_true(sp.command_start_row < row_before)
+}
+
+///|
+test "osc133/scroll_off_screen_invalidates" {
+  let term = term_with_shell_integration(rows=3)
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  assert_eq(term.get_semantic_prompt().state, CommandInput)
+  // Scroll enough to push the prompt off screen
+  feed(term, "\r\nline1\r\nline2\r\nline3\r\nline4")
+  // Prompt should be invalidated
+  assert_eq(term.get_semantic_prompt().state, Inactive)
+  assert_eq(term.get_input_region(), None)
+}
+
+///|
+test "osc133/resize_invalidates" {
+  let term = term_with_shell_integration()
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  assert_eq(term.get_semantic_prompt().state, CommandInput)
+  term.resize(5, 20)
+  assert_eq(term.get_semantic_prompt().state, Inactive)
+}
+
+///|
+test "osc133/reset_invalidates" {
+  let term = term_with_shell_integration()
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  term.reset()
+  assert_eq(term.get_semantic_prompt().state, Inactive)
+}
+
+///|
+test "osc133/is_in_input_region" {
+  let term = term_with_shell_integration()
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  feed(term, "hello")
+  // Input region: row 0, cols 2..7
+  assert_true(term.is_in_input_region(0, 2))
+  assert_true(term.is_in_input_region(0, 5))
+  assert_true(term.is_in_input_region(0, 7))
+  // Outside input region
+  assert_false(term.is_in_input_region(0, 0)) // in prompt
+  assert_false(term.is_in_input_region(0, 1)) // in prompt
+  assert_false(term.is_in_input_region(0, 8)) // past cursor
+  assert_false(term.is_in_input_region(1, 0)) // different row
+}
+
+///|
+test "osc133/is_in_input_region_disabled" {
+  // Without shell_integration, always returns false
+  let term = Terminal::new(rows=4, cols=20)
+  // Manually set prompt state (bypassing feature gate)
+  term.set_feature("shell_integration", true)
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  feed(term, "hello")
+  assert_true(term.is_in_input_region(0, 3))
+  // Disable the feature
+  term.set_feature("shell_integration", false)
+  assert_false(term.is_in_input_region(0, 3))
+}
+
+///|
+test "osc133/cursor_move_sequence_right" {
+  let term = term_with_shell_integration()
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  feed(term, "hello")
+  // Cursor is at (0, 7). Move to (0, 4) = 3 left arrows.
+  let seq = term.cursor_move_sequence(0, 4)
+  assert_eq(seq, "\x1b[D\x1b[D\x1b[D")
+}
+
+///|
+test "osc133/cursor_move_sequence_left" {
+  let term = term_with_shell_integration()
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  feed(term, "hello")
+  // Cursor at (0, 7). Move to (0, 2) = at start of input.
+  let seq = term.cursor_move_sequence(0, 2)
+  assert_eq(seq, "\x1b[D\x1b[D\x1b[D\x1b[D\x1b[D")
+}
+
+///|
+test "osc133/cursor_move_sequence_no_op" {
+  let term = term_with_shell_integration()
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  feed(term, "hello")
+  // Cursor at (0, 7). Move to same position = empty.
+  let seq = term.cursor_move_sequence(0, 7)
+  assert_eq(seq, "")
+}
+
+///|
+test "osc133/cursor_move_sequence_outside_region" {
+  let term = term_with_shell_integration()
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  feed(term, "hello")
+  // Target outside input region → empty
+  let seq = term.cursor_move_sequence(0, 0)
+  assert_eq(seq, "")
+}
+
+///|
+test "osc133/cursor_move_sequence_app_mode" {
+  let term = term_with_shell_integration()
+  send_osc_133(term, "A")
+  feed(term, "$ ")
+  send_osc_133(term, "B")
+  feed(term, "hello")
+  // Enable application cursor key mode
+  term.get_modes().cursor_keys_application = true
+  // Move 2 left: should use SS3 sequences
+  let seq = term.cursor_move_sequence(0, 5)
+  assert_eq(seq, "\x1bOD\x1bOD")
+}

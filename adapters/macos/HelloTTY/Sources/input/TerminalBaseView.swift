@@ -133,13 +133,29 @@ class TerminalBaseView: NSView, NSTextInputClient {
         }
     }
 
-    // MARK: - Mouse (selection)
+    // MARK: - Mouse (selection + input region click-to-move)
+
+    /// Track whether the current mouse gesture is a click-to-move-cursor
+    /// within the shell input region (OSC 133).
+    private var isInputRegionClick = false
 
     override func mouseDown(with event: NSEvent) {
         guard let input = input, let state = terminalState else { return }
         let p = convert(event.locationInWindow, from: nil)
         let cell = state.bridge.pixelToGrid(
             xPx: Int(p.x), yPx: Int(p.y), viewHeightPx: Int(bounds.height))
+
+        // Check if click is within the shell input region (MoonBit SoT)
+        if state.bridge.isInInputRegion(
+            sessionId: state.sessionId, row: cell.row, col: cell.col
+        ) {
+            isInputRegionClick = true
+            input.moveCursorToCell(row: cell.row, col: cell.col, state: state)
+            return
+        }
+
+        // Normal selection behavior
+        isInputRegionClick = false
         input.selectionAnchor = (cell.row, cell.col)
         input.selectionEnd = (cell.row, cell.col)
         needsDisplay = true
@@ -147,15 +163,34 @@ class TerminalBaseView: NSView, NSTextInputClient {
 
     override func mouseDragged(with event: NSEvent) {
         guard let input = input, let state = terminalState else { return }
+
         let p = convert(event.locationInWindow, from: nil)
         let cell = state.bridge.pixelToGrid(
             xPx: Int(p.x), yPx: Int(p.y), viewHeightPx: Int(bounds.height))
+
+        if isInputRegionClick {
+            // Drag within input region: move cursor to follow the drag
+            if state.bridge.isInInputRegion(
+                sessionId: state.sessionId, row: cell.row, col: cell.col
+            ) {
+                input.moveCursorToCell(row: cell.row, col: cell.col, state: state)
+            }
+            return
+        }
+
+        // Normal drag selection
         input.selectionEnd = (cell.row, cell.col)
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
         guard let input = input else { return }
+
+        if isInputRegionClick {
+            isInputRegionClick = false
+            return
+        }
+
         if let a = input.selectionAnchor, let e = input.selectionEnd,
            a.row == e.row && a.col == e.col {
             input.clearSelection()

@@ -172,6 +172,13 @@ class TerminalState: ObservableObject {
             }
             self.refresh()
         }
+
+        // Enable shell integration (OSC 133) for this session.
+        // MoonBit will track semantic prompt regions and expose
+        // click-to-move-cursor affordances when the shell supports it.
+        if sessionId >= 0 {
+            bridge.setFeature(sessionId: sessionId, name: "shell_integration", enabled: true)
+        }
     }
 
     func startPtyLoop(masterFd: Int32) {

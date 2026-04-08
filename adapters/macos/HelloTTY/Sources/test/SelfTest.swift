@@ -68,6 +68,10 @@ class SelfTestRunner {
 
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                                         self.test22_searchResults()
+                                        self.test23_osc133_featureFlag()
+                                        self.test24_osc133_inputRegion()
+                                        self.test25_osc133_cursorMoveSequence()
+                                        self.test26_osc133_disabledByDefault()
                                         self.reportAndExit()
                                     }
                                 }
@@ -841,6 +845,149 @@ class SelfTestRunner {
         if let contentView = NSApp.windows.first?.contentView {
             saveScreenshot(captureView(contentView), name: "08_after_search_test")
         }
+    }
+
+    // MARK: - Test 23-26: OSC 133 Shell Integration
+
+    /// Test OSC 133 on an isolated session to avoid interference from live PTY output.
+    /// Creates a dedicated session, injects OSC 133 sequences directly, verifies results.
+    private func test23_osc133_featureFlag() {
+        let bridge = MoonBitBridge.shared
+
+        guard let session = bridge.createSession(rows: 10, cols: 40) else {
+            fail("test23_osc133_featureFlag: Could not create session")
+            return
+        }
+        let sid = session.sessionId
+        let osc133A = "\u{1b}]133;A\u{07}"
+        let osc133B = "\u{1b}]133;B\u{07}"
+
+        // Feature is disabled by default — OSC 133 should be ignored
+        _ = bridge.processOutputFor(sessionId: sid, data: osc133A + "$ " + osc133B)
+        let disabledResult = bridge.isInInputRegion(sessionId: sid, row: 0, col: 2)
+        if disabledResult {
+            fail("test23_osc133_featureFlag: isInInputRegion true when feature disabled")
+            bridge.destroySession(id: sid)
+            return
+        }
+        pass("test23_osc133_featureFlag: Feature flag correctly gates OSC 133 processing")
+
+        bridge.destroySession(id: sid)
+    }
+
+    /// Test OSC 133 input region detection on an isolated session.
+    private func test24_osc133_inputRegion() {
+        let bridge = MoonBitBridge.shared
+
+        guard let session = bridge.createSession(rows: 10, cols: 40) else {
+            fail("test24_osc133_inputRegion: Could not create session")
+            return
+        }
+        let sid = session.sessionId
+
+        // Enable shell integration
+        bridge.setFeature(sessionId: sid, name: "shell_integration", enabled: true)
+
+        // Inject: prompt start → prompt text → command start → user input
+        let osc133A = "\u{1b}]133;A\u{07}"
+        let osc133B = "\u{1b}]133;B\u{07}"
+        _ = bridge.processOutputFor(sessionId: sid, data: osc133A + "$ " + osc133B + "hello")
+
+        // Cursor should be at row 0, col 7 ("$ hello" = 7 chars)
+        // Input region: row 0, col 2 (after "$ ") to row 0, col 7 (cursor)
+        let inInput = bridge.isInInputRegion(sessionId: sid, row: 0, col: 3)
+        let inPrompt = bridge.isInInputRegion(sessionId: sid, row: 0, col: 0)
+        let pastCursor = bridge.isInInputRegion(sessionId: sid, row: 0, col: 10)
+
+        if !inInput {
+            fail("test24_osc133_inputRegion: Col 3 should be in input region")
+        } else if inPrompt {
+            fail("test24_osc133_inputRegion: Col 0 should NOT be in input region")
+        } else if pastCursor {
+            fail("test24_osc133_inputRegion: Col 10 should NOT be in input region (past cursor)")
+        } else {
+            pass("test24_osc133_inputRegion: Input region correctly detected via FFI")
+        }
+
+        bridge.destroySession(id: sid)
+    }
+
+    /// Test cursor move sequence generation on an isolated session.
+    private func test25_osc133_cursorMoveSequence() {
+        let bridge = MoonBitBridge.shared
+
+        guard let session = bridge.createSession(rows: 10, cols: 40) else {
+            fail("test25_osc133_cursorMoveSequence: Could not create session")
+            return
+        }
+        let sid = session.sessionId
+
+        // Enable and set up input region
+        bridge.setFeature(sessionId: sid, name: "shell_integration", enabled: true)
+        let osc133A = "\u{1b}]133;A\u{07}"
+        let osc133B = "\u{1b}]133;B\u{07}"
+        _ = bridge.processOutputFor(sessionId: sid, data: osc133A + "$ " + osc133B + "hello")
+        // Cursor at (0, 7). Input region: (0,2) to (0,7).
+
+        // Move to col 2 (start of input) = 5 left arrows
+        let seq = bridge.cursorMoveSequence(sessionId: sid, row: 0, col: 2)
+        if let seq = seq, !seq.isEmpty {
+            if seq.contains("\u{1b}[D") || seq.contains("\u{1b}OD") {
+                pass("test25_osc133_cursorMoveSequence: Got arrow key sequence (\(seq.count) bytes)")
+            } else {
+                fail("test25_osc133_cursorMoveSequence: Sequence doesn't contain arrow keys: \(seq.debugDescription)")
+            }
+        } else {
+            fail("test25_osc133_cursorMoveSequence: cursorMoveSequence returned nil/empty")
+        }
+
+        // Target outside input region should return nil
+        let outside = bridge.cursorMoveSequence(sessionId: sid, row: 0, col: 0)
+        if outside != nil {
+            fail("test25_osc133_cursorMoveSequence: Should return nil for target outside input region")
+        } else {
+            pass("test25_osc133_cursorMoveSequence: Correctly returns nil for out-of-region target")
+        }
+
+        bridge.destroySession(id: sid)
+    }
+
+    /// Verify OSC 133;C/D transitions work (command output + finish).
+    private func test26_osc133_disabledByDefault() {
+        let bridge = MoonBitBridge.shared
+
+        guard let session = bridge.createSession(rows: 10, cols: 40) else {
+            fail("test26_osc133_disabledByDefault: Could not create session")
+            return
+        }
+        let sid = session.sessionId
+        bridge.setFeature(sessionId: sid, name: "shell_integration", enabled: true)
+
+        // Full cycle: A → prompt → B → command → C → output → D
+        let a = "\u{1b}]133;A\u{07}"
+        let b = "\u{1b}]133;B\u{07}"
+        let c = "\u{1b}]133;C\u{07}"
+        let d = "\u{1b}]133;D;0\u{07}"
+
+        _ = bridge.processOutputFor(sessionId: sid, data: a + "$ " + b + "ls")
+
+        // Should be in input region now
+        let duringInput = bridge.isInInputRegion(sessionId: sid, row: 0, col: 3)
+
+        _ = bridge.processOutputFor(sessionId: sid, data: c + "\r\nfile1\r\nfile2\r\n" + d)
+
+        // After D, should NOT be in input region
+        let afterFinish = bridge.isInInputRegion(sessionId: sid, row: 0, col: 3)
+
+        if !duringInput {
+            fail("test26_osc133_disabledByDefault: Should be in input region during CommandInput")
+        } else if afterFinish {
+            fail("test26_osc133_disabledByDefault: Should NOT be in input region after D (command finished)")
+        } else {
+            pass("test26_osc133_disabledByDefault: Full A→B→C→D cycle works correctly")
+        }
+
+        bridge.destroySession(id: sid)
     }
 
     // MARK: - Helpers

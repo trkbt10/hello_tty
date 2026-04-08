@@ -249,6 +249,20 @@ class InputHandler {
         return result.isEmpty ? nil : result
     }
 
+    // MARK: - Input Region Cursor Movement (OSC 133)
+
+    /// Move the shell cursor to the target cell by sending arrow key sequences.
+    ///
+    /// Delegates to MoonBit (SoT) which computes the delta from the current
+    /// cursor position and generates the correct escape sequences, respecting
+    /// application cursor key mode.
+    func moveCursorToCell(row: Int, col: Int, state: TerminalState) {
+        guard let seq = state.bridge.cursorMoveSequence(
+            sessionId: state.sessionId, row: row, col: col
+        ) else { return }
+        state.sendText(seq)
+    }
+
     // MARK: - Cursor rect for IME popup
 
     func firstRect(in view: NSView) -> NSRect {

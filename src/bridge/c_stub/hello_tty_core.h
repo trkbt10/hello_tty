@@ -268,6 +268,33 @@ char *hello_tty_notify_panel_resize(const char *panel_id,
                                      const char *first_size_px,
                                      const char *total_size_px);
 
+// ---------- Shell Integration (OSC 133 Semantic Prompt) ----------
+
+// Get the shell input region (where the user is typing a command).
+// Returns "start_row,start_col,end_row,end_col" when in command input mode,
+// or NULL when not in input mode.
+// Caller must free the returned string.
+char *hello_tty_get_input_region(void);
+
+// Get the shell input region for a specific session.
+// Caller must free the returned string.
+char *hello_tty_get_input_region_for(const char *session_id);
+
+// Test whether a grid cell is within the shell input region.
+// Returns 1 if in input region, 0 otherwise.
+int32_t hello_tty_is_in_input_region(const char *session_id, const char *row, const char *col);
+
+// Generate arrow key escape sequences to move the shell cursor to (row, col).
+// Returns the concatenated sequences, or NULL if target is outside input region.
+// Caller must free the returned string.
+char *hello_tty_cursor_move_sequence(const char *session_id, const char *row, const char *col);
+
+// Set a terminal feature flag.
+// name: feature name (e.g., "shell_integration").
+// enabled: "1" to enable, "0" to disable.
+// Returns 0 on success, -1 if session not found.
+int32_t hello_tty_set_feature(const char *session_id, const char *name, const char *enabled);
+
 // ---------- Coordinate Conversion (MoonBit SoT for cell metrics) ----------
 
 // Convert pixel coordinates to grid cell coordinates.

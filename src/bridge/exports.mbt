@@ -208,6 +208,134 @@ pub fn ffi_get_cursor() -> Bytes {
 }
 
 ///|
+/// Get the shell input region (OSC 133 semantic prompt).
+///
+/// Returns "start_row,start_col,end_row,end_col" when the user is typing
+/// a command (CommandInput state), or empty bytes when not in input mode.
+///
+/// The coordinates are grid-relative (0-indexed), matching the coordinate
+/// system used by ffi_get_cursor and pixelToGrid.
+pub fn ffi_get_input_region() -> Bytes {
+  match bridge_state.sessions.active_session() {
+    Some(session) => {
+      let terminal = session.get_terminal()
+      match terminal.get_input_region() {
+        Some((sr, sc, er, ec)) => {
+          let sb = StringBuilder::new(size_hint=32)
+          sb.write_string(sr.to_string())
+          sb.write_char(',')
+          sb.write_string(sc.to_string())
+          sb.write_char(',')
+          sb.write_string(er.to_string())
+          sb.write_char(',')
+          sb.write_string(ec.to_string())
+          result_buf.result_bytes = @utf8.encode(sb.to_string())
+          result_buf.result_bytes
+        }
+        None => Bytes::new(0)
+      }
+    }
+    None => Bytes::new(0)
+  }
+}
+
+///|
+/// Get the shell input region for a specific session.
+pub fn ffi_get_input_region_for(session_id_bytes : Bytes) -> Bytes {
+  let session_id = bytes_to_int(session_id_bytes, -1)
+  match bridge_state.sessions.get_session(session_id) {
+    Some(session) => {
+      let terminal = session.get_terminal()
+      match terminal.get_input_region() {
+        Some((sr, sc, er, ec)) => {
+          let sb = StringBuilder::new(size_hint=32)
+          sb.write_string(sr.to_string())
+          sb.write_char(',')
+          sb.write_string(sc.to_string())
+          sb.write_char(',')
+          sb.write_string(er.to_string())
+          sb.write_char(',')
+          sb.write_string(ec.to_string())
+          result_buf.result_bytes = @utf8.encode(sb.to_string())
+          result_buf.result_bytes
+        }
+        None => Bytes::new(0)
+      }
+    }
+    None => Bytes::new(0)
+  }
+}
+
+///|
+/// Test whether a grid cell is within the shell input region.
+///
+/// Returns 1 if the cell (row, col) is in the input region, 0 otherwise.
+/// Respects the shell_integration feature flag.
+pub fn ffi_is_in_input_region(
+  session_id_bytes : Bytes,
+  row_bytes : Bytes,
+  col_bytes : Bytes,
+) -> Int {
+  let session_id = bytes_to_int(session_id_bytes, -1)
+  let row = bytes_to_int(row_bytes, -1)
+  let col = bytes_to_int(col_bytes, -1)
+  match bridge_state.sessions.get_session(session_id) {
+    Some(session) =>
+      if session.get_terminal().is_in_input_region(row, col) { 1 } else { 0 }
+    None => 0
+  }
+}
+
+///|
+/// Generate arrow key sequences to move the shell cursor to (row, col).
+///
+/// Returns the escape sequence string to write to the PTY, or empty bytes
+/// if the target is not in the input region.
+pub fn ffi_cursor_move_sequence(
+  session_id_bytes : Bytes,
+  row_bytes : Bytes,
+  col_bytes : Bytes,
+) -> Bytes {
+  let session_id = bytes_to_int(session_id_bytes, -1)
+  let row = bytes_to_int(row_bytes, -1)
+  let col = bytes_to_int(col_bytes, -1)
+  match bridge_state.sessions.get_session(session_id) {
+    Some(session) => {
+      let seq = session.get_terminal().cursor_move_sequence(row, col)
+      if seq.length() == 0 {
+        Bytes::new(0)
+      } else {
+        result_buf.result_bytes = @utf8.encode(seq)
+        result_buf.result_bytes
+      }
+    }
+    None => Bytes::new(0)
+  }
+}
+
+///|
+/// Set a terminal feature flag.
+///
+/// name: feature name (e.g., "shell_integration")
+/// enabled: "1" to enable, "0" to disable
+pub fn ffi_set_feature(
+  session_id_bytes : Bytes,
+  name_bytes : Bytes,
+  enabled_bytes : Bytes,
+) -> Int {
+  let session_id = bytes_to_int(session_id_bytes, -1)
+  let name = bytes_to_string(name_bytes)
+  let enabled = bytes_to_int(enabled_bytes, 0) != 0
+  match bridge_state.sessions.get_session(session_id) {
+    Some(session) => {
+      session.get_terminal().set_feature(name, enabled)
+      0
+    }
+    None => -1
+  }
+}
+
+///|
 /// Get the visible terminal grid as a JSON string.
 /// Colors are FULLY RESOLVED using the theme — platform adapters receive
 /// only concrete RGB values, never palette indices or "default" markers.
