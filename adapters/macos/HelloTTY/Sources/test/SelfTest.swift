@@ -62,7 +62,14 @@ class SelfTestRunner {
 
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                                     self.test18_autoReset()
-                                    self.reportAndExit()
+                                    self.test19_selectAll()
+                                    self.test20_copyPaste()
+                                    self.test21_search()
+
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                        self.test22_searchResults()
+                                        self.reportAndExit()
+                                    }
                                 }
                             }
                         }
@@ -621,6 +628,219 @@ class SelfTestRunner {
             return
         }
         pass("test18_autoReset: Viewport auto-reset to live after new output")
+    }
+
+    // MARK: - Test 19: Select All
+
+    private func test19_selectAll() {
+        guard let tab = tabManager.selectedTab,
+              let state = tab.state,
+              let view = state.terminalView,
+              let input = view.input
+        else {
+            fail("test19_selectAll: No selected tab/state/view")
+            return
+        }
+
+        input.selectAll()
+
+        guard let anchor = input.selectionAnchor, let end = input.selectionEnd else {
+            fail("test19_selectAll: Selection not set after selectAll()")
+            return
+        }
+
+        if anchor.row != 0 || anchor.col != 0 {
+            fail("test19_selectAll: Anchor should be (0,0), got (\(anchor.row),\(anchor.col))")
+            return
+        }
+
+        let expectedRow = state.currentRows - 1
+        let expectedCol = state.currentCols - 1
+        if end.row != expectedRow || end.col != expectedCol {
+            fail("test19_selectAll: End should be (\(expectedRow),\(expectedCol)), got (\(end.row),\(end.col))")
+            return
+        }
+
+        pass("test19_selectAll: Selection covers full grid (0,0)-(\(end.row),\(end.col))")
+
+        // Verify selectedText returns non-nil
+        if let text = input.selectedText() {
+            if text.isEmpty {
+                fail("test19_selectAll: selectedText() returned empty string")
+            } else {
+                pass("test19_selectAll: selectedText() returned \(text.count) characters")
+            }
+        } else {
+            fail("test19_selectAll: selectedText() returned nil")
+        }
+
+        input.clearSelection()
+    }
+
+    // MARK: - Test 20: Copy/Paste via clipboard
+
+    private func test20_copyPaste() {
+        guard let tab = tabManager.selectedTab,
+              let state = tab.state,
+              let view = state.terminalView,
+              let input = view.input
+        else {
+            fail("test20_copyPaste: No selected tab/state/view")
+            return
+        }
+
+        // Set up a known selection range on a row that should have content
+        // (Use the grid to find a row with text)
+        guard let grid = state.forceRefreshGrid() else {
+            fail("test20_copyPaste: Cannot fetch grid")
+            return
+        }
+
+        // Find a non-empty row
+        var targetRow = -1
+        for cell in grid.cells {
+            if cell.char != " " && cell.char != "\u{0}" {
+                targetRow = cell.row
+                break
+            }
+        }
+
+        if targetRow < 0 {
+            fail("test20_copyPaste: No non-empty row found for copy test")
+            return
+        }
+
+        // Select that row
+        input.selectionAnchor = (row: targetRow, col: 0)
+        input.selectionEnd = (row: targetRow, col: grid.cols - 1)
+
+        // Copy
+        guard let text = input.selectedText() else {
+            fail("test20_copyPaste: selectedText() returned nil for row \(targetRow)")
+            return
+        }
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+
+        // Verify clipboard
+        guard let pasted = NSPasteboard.general.string(forType: .string) else {
+            fail("test20_copyPaste: Clipboard is empty after copy")
+            return
+        }
+
+        if pasted == text {
+            pass("test20_copyPaste: Clipboard round-trip OK (\(text.count) chars from row \(targetRow))")
+        } else {
+            fail("test20_copyPaste: Clipboard mismatch — copied '\(text)' but got '\(pasted)'")
+        }
+
+        input.clearSelection()
+    }
+
+    // MARK: - Test 21: Search setup
+
+    private func test21_search() {
+        guard let tab = tabManager.selectedTab,
+              let state = tab.state,
+              let view = state.terminalView
+        else {
+            fail("test21_search: No selected tab/state/view")
+            return
+        }
+
+        // First generate some searchable content
+        state.sendText("echo FINDME_TEST_MARKER\r")
+
+        // Show search bar
+        view.showSearchBar()
+
+        if view.searchController == nil {
+            fail("test21_search: searchController is nil")
+            return
+        }
+
+        pass("test21_search: Search bar shown, waiting for content to settle")
+    }
+
+    // MARK: - Test 22: Search results
+
+    private func test22_searchResults() {
+        guard let tab = tabManager.selectedTab,
+              let state = tab.state,
+              let view = state.terminalView,
+              let sc = view.searchController
+        else {
+            fail("test22_searchResults: No search controller")
+            return
+        }
+
+        // Force grid refresh before searching
+        _ = state.forceRefreshGrid()
+
+        // Search for the marker
+        sc.search(for: "FINDME_TEST_MARKER")
+
+        if sc.matches.isEmpty {
+            // The marker might be in scrollback — try refreshing
+            fail("test22_searchResults: No matches found for 'FINDME_TEST_MARKER'")
+        } else {
+            let match = sc.matches[sc.currentMatchIndex]
+            pass("test22_searchResults: Found \(sc.matches.count) match(es) for 'FINDME_TEST_MARKER' — first at row \(match.row), col \(match.startCol)-\(match.endCol)")
+
+            // Verify selection was set to the match
+            if let anchor = view.input?.selectionAnchor,
+               let end = view.input?.selectionEnd {
+                if anchor.row == match.row && anchor.col == match.startCol &&
+                   end.row == match.row && end.col == match.endCol {
+                    pass("test22_searchResults: Selection correctly set to match position")
+                } else {
+                    fail("test22_searchResults: Selection mismatch — expected (\(match.row),\(match.startCol))-(\(match.row),\(match.endCol)), got (\(anchor.row),\(anchor.col))-(\(end.row),\(end.col))")
+                }
+            } else {
+                fail("test22_searchResults: Selection not set after search")
+            }
+
+            // Test next/prev navigation if multiple matches
+            if sc.matches.count > 1 {
+                let firstIdx = sc.currentMatchIndex
+                sc.nextMatch()
+                if sc.currentMatchIndex != firstIdx + 1 {
+                    fail("test22_searchResults: nextMatch() didn't advance index")
+                } else {
+                    pass("test22_searchResults: nextMatch() navigation works")
+                }
+                sc.previousMatch()
+                if sc.currentMatchIndex != firstIdx {
+                    fail("test22_searchResults: previousMatch() didn't go back")
+                } else {
+                    pass("test22_searchResults: previousMatch() navigation works")
+                }
+            }
+
+            // Test status text
+            let status = sc.matchStatusText
+            if status.isEmpty {
+                fail("test22_searchResults: matchStatusText is empty")
+            } else {
+                pass("test22_searchResults: matchStatusText = '\(status)'")
+            }
+        }
+
+        // Close search
+        view.hideSearchBar()
+
+        // Verify selection was cleared
+        if view.input?.selectionAnchor != nil || view.input?.selectionEnd != nil {
+            fail("test22_searchResults: Selection not cleared after hideSearchBar()")
+        } else {
+            pass("test22_searchResults: Selection cleared after close")
+        }
+
+        // Screenshot
+        if let contentView = NSApp.windows.first?.contentView {
+            saveScreenshot(captureView(contentView), name: "08_after_search_test")
+        }
     }
 
     // MARK: - Helpers
