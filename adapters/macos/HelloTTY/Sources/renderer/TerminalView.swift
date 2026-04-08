@@ -156,11 +156,6 @@ class TerminalState: ObservableObject {
             self.cellWidth = metrics.cellWidth / dpi
             self.cellHeight = metrics.cellHeight / dpi
             self.dpiScale = dpi
-        }
-
-        // CPU fallback font — font size comes from MoonBit (SoT).
-        if let metrics = MoonBitBridge.shared.getCellMetrics() {
-            let dpi = metrics.dpiScale > 0 ? metrics.dpiScale : 2.0
             font = NSFont.monospacedSystemFont(
                 ofSize: metrics.fontSize / dpi, weight: .regular)
         } else {

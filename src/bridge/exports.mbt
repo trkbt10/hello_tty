@@ -518,14 +518,13 @@ pub fn ffi_pixel_to_grid(
   let x_px = bytes_to_int(x_px_bytes, 0)
   let y_px = bytes_to_int(y_px_bytes, 0)
   let view_height = bytes_to_int(view_height_px_bytes, 0)
-  let (cell_w, cell_h) = get_cell_size_logical()
-  let col = if cell_w > 0 { Int::max(x_px / cell_w, 0) } else { 0 }
+  let (cell_w, cell_h) = get_cell_size_logical_f()
+  let col = Int::max((Float::from_int(x_px) / cell_w).to_int(), 0)
   // y_px is from bottom (macOS coordinate system), row 0 is at top
-  let row = if cell_h > 0 {
-    Int::max((view_height - y_px) / cell_h, 0)
-  } else {
-    0
-  }
+  let row = Int::max(
+    (Float::from_int(view_height - y_px) / cell_h).to_int(),
+    0,
+  )
   let s = row.to_string() + "," + col.to_string()
   result_buf.result_bytes = @utf8.encode(s)
   result_buf.result_bytes
@@ -923,17 +922,25 @@ pub fn ffi_resize_layout_px(
 ) -> Bytes {
   let width_px = bytes_to_int(width_px_bytes, 640)
   let height_px = bytes_to_int(height_px_bytes, 480)
-  let (cell_w, cell_h) = get_cell_size_logical()
-  let total_cols = if cell_w > 0 { Int::max(width_px / cell_w, 1) } else { 80 }
-  let total_rows = if cell_h > 0 { Int::max(height_px / cell_h, 1) } else { 24 }
+  ensure_gpu_initialized()
+  let (cell_w, cell_h) = get_cell_size_logical_f()
+  let total_cols = Int::max(
+    (Float::from_int(width_px) / cell_w).to_int(),
+    1,
+  )
+  let total_rows = Int::max(
+    (Float::from_int(height_px) / cell_h).to_int(),
+    1,
+  )
   bridge_state.layout.resize_all(total_rows, total_cols)
   panels_to_json()
 }
 
 ///|
-/// Get cell size in logical points (pixels / dpi_scale).
-/// Used for pixel → grid conversion.
-fn get_cell_size_logical() -> (Int, Int) {
+/// Get cell size in logical points (pixels / dpi_scale) as floats.
+/// Used for pixel → grid conversion. Returns floats to avoid
+/// integer truncation errors (e.g. 17px / 2.0 dpi = 8.5 logical points).
+fn get_cell_size_logical_f() -> (Float, Float) {
   let (cw, ch) = match bridge_state.gpu_backend {
     Some(gpu) => gpu.get_cell_size()
     None => (8, 16)
@@ -942,9 +949,12 @@ fn get_cell_size_logical() -> (Int, Int) {
     Some(r) => r.get_config().dpi_scale
     None => (2.0 : Float)
   }
-  let logical_w = (Float::from_int(cw) / dpi).to_int()
-  let logical_h = (Float::from_int(ch) / dpi).to_int()
-  (if logical_w > 0 { logical_w } else { 8 }, if logical_h > 0 { logical_h } else { 16 })
+  let logical_w = Float::from_int(cw) / dpi
+  let logical_h = Float::from_int(ch) / dpi
+  (
+    if logical_w > (0.0 : Float) { logical_w } else { (8.0 : Float) },
+    if logical_h > (0.0 : Float) { logical_h } else { (16.0 : Float) },
+  )
 }
 
 ///|
@@ -1187,7 +1197,7 @@ fn bytes_to_int(data : Bytes, default_ : Int) -> Int {
 ///|
 /// Encode a theme RgbaColor to JSON as [r, g, b] (0-255).
 fn rgba_to_json(color : @theme.RgbaColor) -> Json {
-  [color.r.to_int(), color.g.to_int(), color.b.to_int()].to_json()
+  [color.r.to_int(), color.g.to_int(), color.b.to_int(), color.a.to_int()].to_json()
 }
 
 ///|

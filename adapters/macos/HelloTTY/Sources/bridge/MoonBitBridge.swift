@@ -953,10 +953,10 @@ class MoonBitBridge {
         let name: String
         let isDark: Bool
         let bgAlpha: Double
-        let fg: (Int, Int, Int)
-        let bg: (Int, Int, Int)
-        let cursor: (Int, Int, Int)
-        let selection: (Int, Int, Int)
+        let fg: (Int, Int, Int, Int)  // r, g, b, a (0-255)
+        let bg: (Int, Int, Int, Int)
+        let cursor: (Int, Int, Int, Int)
+        let selection: (Int, Int, Int, Int)
     }
 
     /// Get theme configuration from MoonBit.
@@ -970,19 +970,20 @@ class MoonBitBridge {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
 
-        func parseRGB(_ value: Any?) -> (Int, Int, Int)? {
-            guard let arr = value as? [Int], arr.count == 3 else { return nil }
-            return (arr[0], arr[1], arr[2])
+        func parseRGBA(_ value: Any?) -> (Int, Int, Int, Int)? {
+            guard let arr = value as? [Int], arr.count >= 3 else { return nil }
+            let a = arr.count >= 4 ? arr[3] : 255
+            return (arr[0], arr[1], arr[2], a)
         }
 
         return ThemeInfo(
             name: obj["name"] as? String ?? "Unknown",
             isDark: obj["is_dark"] as? Bool ?? true,
             bgAlpha: obj["bg_alpha"] as? Double ?? 1.0,
-            fg: parseRGB(obj["fg"]) ?? (230, 230, 230),
-            bg: parseRGB(obj["bg"]) ?? (20, 20, 26),
-            cursor: parseRGB(obj["cursor"]) ?? (102, 179, 255),
-            selection: parseRGB(obj["selection"]) ?? (64, 115, 191)
+            fg: parseRGBA(obj["fg"]) ?? (230, 230, 230, 255),
+            bg: parseRGBA(obj["bg"]) ?? (20, 20, 26, 255),
+            cursor: parseRGBA(obj["cursor"]) ?? (102, 179, 255, 217),
+            selection: parseRGBA(obj["selection"]) ?? (64, 115, 191, 102)
         )
     }
 
