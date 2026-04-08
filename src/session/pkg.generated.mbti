@@ -1,0 +1,57 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "trkbt10/hello_tty/src/session"
+
+import {
+  "trkbt10/hello_tty/src/terminal",
+  "trkbt10/hello_tty/src/vt_parser",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+pub struct Session {
+  id : Int
+  terminal : @terminal.Terminal
+  parser : @vt_parser.Parser
+  mut title : String
+  mut alive : Bool
+  mut master_fd : Int
+  mut child_pid : Int
+  mut rows : Int
+  mut cols : Int
+}
+pub fn Session::get_child_pid(Self) -> Int
+pub fn Session::get_id(Self) -> Int
+pub fn Session::get_master_fd(Self) -> Int
+pub fn Session::get_terminal(Self) -> @terminal.Terminal
+pub fn Session::get_title(Self) -> String
+pub fn Session::handle_key(Self, Int, Int) -> String
+pub fn Session::is_alive(Self) -> Bool
+pub fn Session::mark_dead(Self) -> Unit
+pub fn Session::new(Int, Int, Int) -> Self
+pub fn Session::process_output(Self, String) -> Unit
+pub fn Session::resize(Self, Int, Int) -> Unit
+pub fn Session::set_pty(Self, Int, Int) -> Unit
+
+pub struct SessionManager {
+  sessions : Map[Int, Session]
+  mut active_id : Int
+  mut next_id : Int
+}
+pub fn SessionManager::active_session(Self) -> Session?
+pub fn SessionManager::count(Self) -> Int
+pub fn SessionManager::create_session(Self, Int, Int) -> (Int, Int)
+pub fn SessionManager::destroy_all(Self) -> Unit
+pub fn SessionManager::destroy_session(Self, Int) -> Unit
+pub fn SessionManager::get_active_id(Self) -> Int
+pub fn SessionManager::get_session(Self, Int) -> Session?
+pub fn SessionManager::list_sessions(Self) -> Array[(Int, String, Bool)]
+pub fn SessionManager::new() -> Self
+pub fn SessionManager::switch_to(Self, Int) -> Bool
+
+// Type aliases
+
+// Traits
+

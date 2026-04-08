@@ -231,36 +231,42 @@ fn serialize_session_grid(session : @session.Session) -> Bytes {
   let grid = terminal.get_grid()
   let cursor = terminal.get_cursor()
   let theme = bridge_state.theme
-  // Determine dirty region
-  let (dr_top, dr_left, dr_bottom, dr_right, is_full) = match
-    grid.get_dirty_rect() {
-    Some((t, l, b, r)) => {
-      let full = grid.dirty_all
-      (t, l, b, r, full)
-    }
-    None => {
-      let sb = StringBuilder::new(size_hint=128)
-      sb.write_string("{\"rows\":")
-      sb.write_string(grid.rows.to_string())
-      sb.write_string(",\"cols\":")
-      sb.write_string(grid.cols.to_string())
-      sb.write_string(",\"cursor\":{\"row\":")
-      sb.write_string(cursor.row.to_string())
-      sb.write_string(",\"col\":")
-      sb.write_string(cursor.col.to_string())
-      sb.write_string(",\"visible\":")
-      sb.write_string(if cursor.visible { "true" } else { "false" })
-      sb.write_string(",\"style\":\"")
-      sb.write_string(
-        match cursor.style {
-          Block => "block"
-          Underline => "underline"
-          Bar => "bar"
-        },
-      )
-      sb.write_string("\"},\"dirty\":\"none\",\"cells\":[]}")
-      result_buf.result_bytes = @utf8.encode(sb.to_string())
-      return result_buf.result_bytes
+  let viewport_offset = terminal.get_viewport_offset()
+  // Determine dirty region.
+  // When viewport is scrolled (offset > 0), we always return the full grid
+  // because dirty tracking only covers live grid writes, not viewport changes.
+  let (dr_top, dr_left, dr_bottom, dr_right, is_full) = if viewport_offset > 0 {
+    (0, 0, grid.rows - 1, grid.cols - 1, true)
+  } else {
+    match grid.get_dirty_rect() {
+      Some((t, l, b, r)) => {
+        let full = grid.dirty_all
+        (t, l, b, r, full)
+      }
+      None => {
+        let sb = StringBuilder::new(size_hint=128)
+        sb.write_string("{\"rows\":")
+        sb.write_string(grid.rows.to_string())
+        sb.write_string(",\"cols\":")
+        sb.write_string(grid.cols.to_string())
+        sb.write_string(",\"cursor\":{\"row\":")
+        sb.write_string(cursor.row.to_string())
+        sb.write_string(",\"col\":")
+        sb.write_string(cursor.col.to_string())
+        sb.write_string(",\"visible\":")
+        sb.write_string(if cursor.visible { "true" } else { "false" })
+        sb.write_string(",\"style\":\"")
+        sb.write_string(
+          match cursor.style {
+            Block => "block"
+            Underline => "underline"
+            Bar => "bar"
+          },
+        )
+        sb.write_string("\"},\"dirty\":\"none\",\"cells\":[]}")
+        result_buf.result_bytes = @utf8.encode(sb.to_string())
+        return result_buf.result_bytes
+      }
     }
   }
   let cells_in_rect = (dr_bottom - dr_top + 1) * (dr_right - dr_left + 1)
@@ -297,10 +303,15 @@ fn serialize_session_grid(session : @session.Session) -> Bytes {
     sb.write_string(dr_right.to_string())
     sb.write_char(']')
   }
+  sb.write_string(",\"viewport_offset\":")
+  sb.write_string(terminal.get_viewport_offset().to_string())
   sb.write_string(",\"cells\":[")
   let mut first = true
   for row in dr_top..<=dr_bottom {
-    let line = grid.lines[row]
+    let line = match terminal.get_viewport_row(row) {
+      Some(r) => r
+      None => continue
+    }
     for col in dr_left..<=dr_right {
       let cell = line.get(col)
       if cell.char == '\u0000' {
@@ -1105,12 +1116,87 @@ pub fn ffi_resize_session(
   }
 }
 
+// ========== Viewport / Scrollback ==========
+
+///|
+/// Scroll a session's viewport up (back into scrollback history).
+/// Returns the new viewport offset, or -1 if session not found.
+pub fn ffi_scroll_viewport_up(
+  session_id_bytes : Bytes,
+  lines_bytes : Bytes,
+) -> Int {
+  let session_id = bytes_to_int(session_id_bytes, -1)
+  let lines = bytes_to_int(lines_bytes, 1)
+  match bridge_state.sessions.get_session(session_id) {
+    Some(session) => {
+      session.get_terminal().scroll_viewport_up(lines)
+      session.get_terminal().get_viewport_offset()
+    }
+    None => -1
+  }
+}
+
+///|
+/// Scroll a session's viewport down (toward live view).
+/// Returns the new viewport offset, or -1 if session not found.
+pub fn ffi_scroll_viewport_down(
+  session_id_bytes : Bytes,
+  lines_bytes : Bytes,
+) -> Int {
+  let session_id = bytes_to_int(session_id_bytes, -1)
+  let lines = bytes_to_int(lines_bytes, 1)
+  match bridge_state.sessions.get_session(session_id) {
+    Some(session) => {
+      session.get_terminal().scroll_viewport_down(lines)
+      session.get_terminal().get_viewport_offset()
+    }
+    None => -1
+  }
+}
+
+///|
+/// Reset a session's viewport to live view.
+/// Returns 0 on success, -1 if session not found.
+pub fn ffi_reset_viewport(session_id_bytes : Bytes) -> Int {
+  let session_id = bytes_to_int(session_id_bytes, -1)
+  match bridge_state.sessions.get_session(session_id) {
+    Some(session) => {
+      session.get_terminal().reset_viewport()
+      0
+    }
+    None => -1
+  }
+}
+
+///|
+/// Get a session's current viewport offset.
+/// Returns offset (0=live), or -1 if session not found.
+pub fn ffi_get_viewport_offset(session_id_bytes : Bytes) -> Int {
+  let session_id = bytes_to_int(session_id_bytes, -1)
+  match bridge_state.sessions.get_session(session_id) {
+    Some(session) => session.get_terminal().get_viewport_offset()
+    None => -1
+  }
+}
+
+///|
+/// Get a session's scrollback length (total lines in history).
+/// Returns length, or -1 if session not found.
+pub fn ffi_get_scrollback_length(session_id_bytes : Bytes) -> Int {
+  let session_id = bytes_to_int(session_id_bytes, -1)
+  match bridge_state.sessions.get_session(session_id) {
+    Some(session) => session.get_terminal().get_scrollback().length()
+    None => -1
+  }
+}
+
 // ========== Input Classification ==========
 
 ///|
 /// Classify a key event — SoT for input routing decisions.
 /// Returns:
 ///   0=DirectToPty, 1=ForwardToIme, 2=ClipboardCopy, 3=ClipboardPaste,
+///   4=ClipboardCut, 5=SelectAll, 6=FindInTerminal,
 ///   10=SplitRight, 11=SplitDown, 12=NextSplit, 13=PrevSplit,
 ///   14=NewTab, 15=ClosePanel, 16=NextTab, 17=PrevTab,
 ///   20+N=GotoTab(N) (N=-1 encoded as 19 for "last tab"),
@@ -1128,6 +1214,9 @@ pub fn ffi_classify_key(
     ForwardToIme => 1
     ClipboardCopy => 2
     ClipboardPaste => 3
+    ClipboardCut => 4
+    SelectAll => 5
+    FindInTerminal => 6
     SplitRight => 10
     SplitDown => 11
     NextSplit => 12

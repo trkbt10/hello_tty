@@ -1,0 +1,40 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "trkbt10/hello_tty/src/renderer/ffi"
+
+// Values
+pub fn gpu_atlas_create(Int, Int) -> Int
+
+pub fn gpu_atlas_upload(Int, Int, Int, Int, FixedArray[Byte], Int) -> Int
+
+pub fn gpu_draw_cells(Int, FixedArray[Float], Int) -> Int
+
+pub fn gpu_draw_cursor(Int, Float, Float, Float, Float, Byte, Byte, Byte, Byte, Int) -> Unit
+
+pub fn gpu_frame_begin(Int) -> Int
+
+pub fn gpu_frame_clear(Int, Byte, Byte, Byte, Byte) -> Unit
+
+pub fn gpu_frame_end(Int) -> Int
+
+pub fn gpu_init(Int, Int, Int, Int) -> Int
+
+pub fn gpu_init_device() -> Int
+
+pub fn gpu_resize(Int, Int) -> Int
+
+pub fn gpu_shutdown() -> Unit
+
+pub fn gpu_surface_create(Int, Int, Int, Int) -> Int
+
+pub fn gpu_surface_destroy(Int) -> Unit
+
+pub fn gpu_surface_resize(Int, Int, Int) -> Int
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits
+

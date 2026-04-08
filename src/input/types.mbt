@@ -36,6 +36,12 @@ pub(all) enum KeyClassification {
   PrevTab
   /// Go to tab by 0-based index. Index -1 means "last tab".
   GotoTab(Int)
+  /// Cut selected text to clipboard (copy + clear selection).
+  ClipboardCut
+  /// Select all text in the current terminal.
+  SelectAll
+  /// Open find-in-terminal search bar.
+  FindInTerminal
 } derive(Show, Eq)
 
 ///|

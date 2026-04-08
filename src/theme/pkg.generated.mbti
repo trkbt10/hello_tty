@@ -1,0 +1,39 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "trkbt10/hello_tty/src/theme"
+
+import {
+  "trkbt10/hello_tty/src/terminal",
+}
+
+// Values
+
+// Errors
+
+// Types and methods
+pub(all) struct RgbaColor {
+  r : Byte
+  g : Byte
+  b : Byte
+  a : Byte
+} derive(Eq, Show)
+pub fn RgbaColor::from_rgb(Byte, Byte, Byte) -> Self
+
+pub(all) struct Theme {
+  name : String
+  fg : RgbaColor
+  bg : RgbaColor
+  cursor : RgbaColor
+  selection : RgbaColor
+  bold_color : RgbaColor?
+  ansi16 : FixedArray[RgbaColor]
+  bg_alpha : Float
+} derive(Show)
+pub fn Theme::classic() -> Self
+pub fn Theme::is_dark(Self) -> Bool
+pub fn Theme::midnight() -> Self
+pub fn Theme::resolve_color(Self, @terminal.Color, Bool) -> RgbaColor
+
+// Type aliases
+
+// Traits
+

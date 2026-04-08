@@ -26,6 +26,8 @@ pub let attr_strikethrough : Int
 
 pub let attr_underline : Int
 
+pub fn char_width(Char) -> Int
+
 pub let default_max_scrollback : Int
 
 pub let default_page_size : Int
@@ -100,23 +102,34 @@ pub struct Grid {
   lines : Array[Row]
   mut scroll_top : Int
   mut scroll_bottom : Int
+  mut dirty_top : Int
+  mut dirty_bottom : Int
+  mut dirty_left : Int
+  mut dirty_right : Int
+  mut dirty_all : Bool
 } derive(Show)
 pub fn Grid::clear(Self) -> Unit
 pub fn Grid::clear_cells(Self, Int, Int, Int) -> Unit
 pub fn Grid::clear_rows(Self, Int, Int) -> Unit
+pub fn Grid::clear_wide_char_at(Self, Int, Int) -> Unit
 pub fn Grid::delete_cells(Self, Int, Int, Int) -> Unit
 pub fn Grid::delete_lines(Self, Int, Int) -> Unit
 pub fn Grid::get_cell(Self, Int, Int) -> Cell
+pub fn Grid::get_dirty_rect(Self) -> (Int, Int, Int, Int)?
 pub fn Grid::has_dirty_rows(Self) -> Bool
 pub fn Grid::insert_cells(Self, Int, Int, Int) -> Unit
 pub fn Grid::insert_lines(Self, Int, Int) -> Unit
 pub fn Grid::mark_all_clean(Self) -> Unit
+pub fn Grid::mark_all_dirty(Self) -> Unit
+pub fn Grid::mark_dirty(Self, Int, Int) -> Unit
+pub fn Grid::mark_row_dirty(Self, Int) -> Unit
 pub fn Grid::new(Int, Int) -> Self
 pub fn Grid::reset_scroll_region(Self) -> Unit
 pub fn Grid::resize(Self, Int, Int) -> Unit
 pub fn Grid::scroll_down(Self, Int) -> Unit
 pub fn Grid::scroll_up(Self, Int) -> Array[Row]
 pub fn Grid::set_cell(Self, Int, Int, Char, Cell) -> Unit
+pub fn Grid::set_cell_with_width(Self, Int, Int, Char, Cell, Int) -> Unit
 pub fn Grid::set_scroll_region(Self, Int, Int) -> Unit
 
 pub struct Row {
@@ -196,17 +209,23 @@ pub struct Terminal {
   mut title : String
   mut rows : Int
   mut cols : Int
+  mut viewport_offset : Int
 }
 pub fn Terminal::get_cursor(Self) -> Cursor
 pub fn Terminal::get_grid(Self) -> Grid
 pub fn Terminal::get_modes(Self) -> TermModes
 pub fn Terminal::get_scrollback(Self) -> Scrollback
 pub fn Terminal::get_title(Self) -> String
+pub fn Terminal::get_viewport_offset(Self) -> Int
+pub fn Terminal::get_viewport_row(Self, Int) -> Row?
 pub fn Terminal::handle_event(Self, @vt_parser.ParserEvent) -> Unit
 pub fn Terminal::handle_events(Self, Array[@vt_parser.ParserEvent]) -> Unit
 pub fn Terminal::new(rows? : Int, cols? : Int, max_scrollback? : Int) -> Self
 pub fn Terminal::reset(Self) -> Unit
+pub fn Terminal::reset_viewport(Self) -> Unit
 pub fn Terminal::resize(Self, Int, Int) -> Unit
+pub fn Terminal::scroll_viewport_down(Self, Int) -> Unit
+pub fn Terminal::scroll_viewport_up(Self, Int) -> Unit
 
 // Type aliases
 

@@ -933,3 +933,115 @@ test "invariant/ech_partial_wide" {
   feed(term, "\u001b[3X") // ECH 3
   assert_row_invariant(term.get_grid(), 0)
 }
+
+// ========== Viewport / Scrollback ==========
+
+///|
+test "viewport/offset_starts_at_zero" {
+  let term = Terminal::new(rows=4, cols=10)
+  assert_eq(term.get_viewport_offset(), 0)
+}
+
+///|
+test "viewport/live_returns_grid_rows" {
+  let term = Terminal::new(rows=4, cols=5)
+  // Use \r\n to ensure each line starts at column 0
+  feed(term, "AAA\r\nBBB\r\nCCC")
+  assert_eq(term.get_viewport_row(0).unwrap().get(0).char, 'A')
+  assert_eq(term.get_viewport_row(1).unwrap().get(0).char, 'B')
+  assert_eq(term.get_viewport_row(2).unwrap().get(0).char, 'C')
+}
+
+///|
+test "viewport/scroll_up_into_scrollback" {
+  // Use \r\n so each line starts at col 0 (LF alone doesn't do CR)
+  let term = Terminal::new(rows=4, cols=5)
+  feed(term, "A\r\nB\r\nC\r\nD\r\nE\r\nF\r\nG\r\nH")
+  // After 8 lines with 4-row grid: 4 lines in scrollback, 4 in grid
+  let sb = term.get_scrollback()
+  assert_eq(sb.length(), 4)
+  assert_eq(sb.get(0).unwrap().get(0).char, 'A')
+  assert_eq(sb.get(1).unwrap().get(0).char, 'B')
+  assert_eq(sb.get(2).unwrap().get(0).char, 'C')
+  assert_eq(sb.get(3).unwrap().get(0).char, 'D')
+  assert_eq(term.get_grid().get_cell(0, 0).char, 'E')
+  assert_eq(term.get_grid().get_cell(1, 0).char, 'F')
+  assert_eq(term.get_grid().get_cell(2, 0).char, 'G')
+  assert_eq(term.get_grid().get_cell(3, 0).char, 'H')
+
+  // Scroll viewport up by 2 lines
+  term.scroll_viewport_up(2)
+  assert_eq(term.get_viewport_offset(), 2)
+
+  // screen_row 0: abs_index = 4 - 2 + 0 = 2 → scrollback[2] = C
+  assert_eq(term.get_viewport_row(0).unwrap().get(0).char, 'C')
+  // screen_row 1: abs_index = 3 → scrollback[3] = D
+  assert_eq(term.get_viewport_row(1).unwrap().get(0).char, 'D')
+  // screen_row 2: abs_index = 4 → grid[0] = E
+  assert_eq(term.get_viewport_row(2).unwrap().get(0).char, 'E')
+  // screen_row 3: abs_index = 5 → grid[1] = F
+  assert_eq(term.get_viewport_row(3).unwrap().get(0).char, 'F')
+}
+
+///|
+test "viewport/scroll_fully_into_scrollback" {
+  let term = Terminal::new(rows=4, cols=5)
+  feed(term, "A\r\nB\r\nC\r\nD\r\nE\r\nF\r\nG\r\nH")
+  term.scroll_viewport_up(4)
+  assert_eq(term.get_viewport_offset(), 4)
+  assert_eq(term.get_viewport_row(0).unwrap().get(0).char, 'A')
+  assert_eq(term.get_viewport_row(1).unwrap().get(0).char, 'B')
+  assert_eq(term.get_viewport_row(2).unwrap().get(0).char, 'C')
+  assert_eq(term.get_viewport_row(3).unwrap().get(0).char, 'D')
+}
+
+///|
+test "viewport/clamps_to_scrollback_length" {
+  let term = Terminal::new(rows=4, cols=5)
+  feed(term, "A\r\nB\r\nC\r\nD\r\nE\r\nF\r\nG\r\nH")
+  term.scroll_viewport_up(100)
+  assert_eq(term.get_viewport_offset(), 4)
+}
+
+///|
+test "viewport/scroll_down_toward_live" {
+  let term = Terminal::new(rows=4, cols=5)
+  feed(term, "A\r\nB\r\nC\r\nD\r\nE\r\nF\r\nG\r\nH")
+  term.scroll_viewport_up(4)
+  assert_eq(term.get_viewport_offset(), 4)
+  term.scroll_viewport_down(2)
+  assert_eq(term.get_viewport_offset(), 2)
+  term.scroll_viewport_down(10)
+  assert_eq(term.get_viewport_offset(), 0)
+}
+
+///|
+test "viewport/new_output_resets_to_live" {
+  let term = Terminal::new(rows=4, cols=5)
+  feed(term, "A\r\nB\r\nC\r\nD\r\nE\r\nF\r\nG\r\nH")
+  term.scroll_viewport_up(3)
+  assert_eq(term.get_viewport_offset(), 3)
+  // New output arrives → viewport snaps to live
+  feed(term, "X")
+  assert_eq(term.get_viewport_offset(), 0)
+}
+
+///|
+test "viewport/alternate_screen_ignores_scroll" {
+  let term = Terminal::new(rows=4, cols=5)
+  feed(term, "A\r\nB\r\nC\r\nD\r\nE\r\nF\r\nG\r\nH")
+  // Switch to alternate screen (DECSET 1049)
+  feed(term, "\u001b[?1049h")
+  term.scroll_viewport_up(5)
+  assert_eq(term.get_viewport_offset(), 0)
+}
+
+///|
+test "viewport/reset_clears_viewport_offset" {
+  let term = Terminal::new(rows=4, cols=5)
+  feed(term, "A\r\nB\r\nC\r\nD\r\nE\r\nF\r\nG\r\nH")
+  term.scroll_viewport_up(3)
+  assert_eq(term.get_viewport_offset(), 3)
+  term.reset()
+  assert_eq(term.get_viewport_offset(), 0)
+}

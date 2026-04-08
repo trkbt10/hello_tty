@@ -1,0 +1,20 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "trkbt10/hello_tty/src/app/ffi"
+
+// Values
+pub fn getpid() -> Int
+
+pub fn kill_process(Int) -> Unit
+
+pub fn spawn_simple(Bytes, Int, Bytes, Int, Bytes, Int, Bytes, Int, Bytes, Int) -> Int
+
+pub fn waitpid_nonblock(Int) -> Int
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits
+

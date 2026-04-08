@@ -1,0 +1,128 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "trkbt10/hello_tty/src/layout"
+
+import {
+  "trkbt10/hello_tty/src/session",
+}
+
+// Values
+pub fn can_split(Int, Int, SplitDirection, Float, Int) -> Bool
+
+pub fn collect_leaves(LayoutNode) -> Array[PanelInfo]
+
+pub fn count_leaves(LayoutNode) -> Int
+
+pub fn dfs_index_of(LayoutNode, Int) -> Int
+
+pub fn find_neighbor(LayoutNode, Int, FocusDirection) -> PanelInfo?
+
+pub fn find_panel(LayoutNode, Int) -> PanelInfo?
+
+pub fn find_sibling_panel(LayoutNode, Int) -> PanelInfo?
+
+pub let min_panel_cols : Int
+
+pub let min_panel_rows : Int
+
+pub fn panel_at_index(LayoutNode, Int) -> PanelInfo?
+
+pub fn remove_panel(LayoutNode, Int) -> LayoutNode?
+
+pub fn replace_leaf(LayoutNode, Int, LayoutNode) -> LayoutNode?
+
+pub fn resize_tree(LayoutNode, Int, Int, Int) -> Unit
+
+// Errors
+
+// Types and methods
+pub(all) enum FocusDirection {
+  Up
+  Down
+  Left
+  Right
+} derive(Eq, Show)
+
+pub struct LayoutManager {
+  tabs : Map[Int, Tab]
+  sessions : @session.SessionManager
+  mut active_tab_id : Int
+  mut next_tab_id : Int
+  mut next_panel_id : Int
+  divider_size : Int
+  mut last_total_rows : Int
+  mut last_total_cols : Int
+}
+pub fn LayoutManager::active_tab(Self) -> Tab?
+pub fn LayoutManager::close_panel(Self, Int) -> Int
+pub fn LayoutManager::close_tab(Self, Int) -> Unit
+pub fn LayoutManager::create_tab(Self, Int, Int) -> (Int, Int, Int)
+pub fn LayoutManager::destroy_all(Self) -> Unit
+pub fn LayoutManager::focus_direction(Self, FocusDirection) -> Bool
+pub fn LayoutManager::focus_panel(Self, Int) -> Bool
+pub fn LayoutManager::focus_panel_by_index(Self, Int) -> Bool
+pub fn LayoutManager::focused_panel(Self) -> PanelInfo?
+pub fn LayoutManager::get_active_layout(Self) -> LayoutNode?
+pub fn LayoutManager::get_active_tab_id(Self) -> Int
+pub fn LayoutManager::get_all_panels(Self) -> Array[PanelSnapshot]
+pub fn LayoutManager::get_focused_panel_id(Self) -> Int
+pub fn LayoutManager::get_sessions(Self) -> @session.SessionManager
+pub fn LayoutManager::list_tabs(Self) -> Array[(Int, String, Bool)]
+pub fn LayoutManager::new(@session.SessionManager) -> Self
+pub fn LayoutManager::next_tab(Self) -> Bool
+pub fn LayoutManager::notify_panel_resize(Self, Int, Int, Int) -> Bool
+pub fn LayoutManager::prev_tab(Self) -> Bool
+pub fn LayoutManager::resize_all(Self, Int, Int) -> Unit
+pub fn LayoutManager::split_panel(Self, Int, SplitDirection) -> SplitResult?
+pub fn LayoutManager::split_panel_with_ratio(Self, Int, SplitDirection, Float) -> SplitResult?
+pub fn LayoutManager::switch_tab(Self, Int) -> Bool
+pub fn LayoutManager::tab_count(Self) -> Int
+pub fn LayoutManager::update_tab_title(Self) -> Unit
+
+pub(all) enum LayoutNode {
+  Leaf(PanelInfo)
+  Split(SplitDirection, LayoutNode, LayoutNode, Float)
+} derive(Show)
+
+pub(all) enum PanelBackend {
+  Native
+} derive(Show)
+
+pub struct PanelInfo {
+  panel_id : Int
+  session_id : Int
+  mut rows : Int
+  mut cols : Int
+} derive(Show)
+
+pub struct PanelSnapshot {
+  panel_id : Int
+  session_id : Int
+  rows : Int
+  cols : Int
+  focused : Bool
+} derive(Show)
+
+pub(all) enum SplitDirection {
+  Horizontal
+  Vertical
+} derive(Eq, Show)
+
+pub struct SplitResult {
+  new_panel_id : Int
+  new_session_id : Int
+  master_fd : Int
+  existing_rows : Int
+  existing_cols : Int
+} derive(Show)
+
+pub struct Tab {
+  id : Int
+  mut layout : LayoutNode
+  mut focused_panel_id : Int
+  mut title : String
+} derive(Show)
+
+// Type aliases
+
+// Traits
+

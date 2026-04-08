@@ -6,17 +6,21 @@ import {
   "trkbt10/hello_tty/src/renderer",
   "trkbt10/hello_tty/src/terminal",
   "trkbt10/hello_tty/src/vt_parser",
-  "trkbt10/subprocess/managed",
 }
 
 // Values
+pub fn current_pid() -> Int
+
+pub fn is_child_alive(Int) -> Bool
+
+pub fn kill_child(Int) -> Unit
+
+pub fn spawn_pty_reader(String, String, String, Int, Int) -> Int raise AppError
+
 pub fn translate_key_input(Int, Int, Bool) -> String
 
 // Errors
 pub suberror AppError {
-  PtyError(String)
-  PlatformError(String)
-  RenderError(String)
   IpcError(String)
 }
 
@@ -28,18 +32,19 @@ pub struct App {
   renderer : @renderer.Renderer
   platform : @platform.Platform
   mut state : AppState
-  process_manager : @managed.ProcessManager
+  mut pty_reader_pid : Int
 }
 pub fn App::get_platform(Self) -> @platform.Platform
-pub fn App::get_process_manager(Self) -> @managed.ProcessManager
 pub fn App::get_state(Self) -> AppState
 pub fn App::get_terminal(Self) -> @terminal.Terminal
 pub fn App::handle_platform_event(Self, @platform.PlatformEvent) -> String
+pub fn App::is_pty_reader_alive(Self) -> Bool
 pub fn App::is_running(Self) -> Bool
 pub fn App::new(config? : AppConfig) -> Self
 pub fn App::process_pty_output(Self, String) -> Unit
 pub fn App::render(Self) -> Array[@renderer.RenderCommand]
 pub fn App::resize(Self, Int, Int) -> Unit
+pub fn App::set_pty_reader_pid(Self, Int) -> Unit
 pub fn App::shutdown(Self) -> Unit
 pub fn App::start(Self) -> Unit
 pub fn App::sync_title(Self) -> Unit

@@ -64,6 +64,22 @@ pub fn App::handle_platform_event(
   match event {
     None => ""
     KeyPress(key_code~, modifiers~) => {
+      let shift = modifiers.land(@platform.mod_shift) != 0
+      // Shift+PageUp / Shift+PageDown: scroll viewport (not sent to PTY)
+      if shift && key_code == 0xF72C {
+        // Shift+PageUp — scroll back by half a screen
+        self.terminal.scroll_viewport_up(self.terminal.rows / 2)
+        return ""
+      }
+      if shift && key_code == 0xF72D {
+        // Shift+PageDown — scroll forward by half a screen
+        self.terminal.scroll_viewport_down(self.terminal.rows / 2)
+        return ""
+      }
+      // Any other key press while scrolled back: snap to live
+      if self.terminal.get_viewport_offset() > 0 {
+        self.terminal.reset_viewport()
+      }
       let modes = self.terminal.get_modes()
       translate_key_input(key_code, modifiers, modes.cursor_keys_application)
     }
@@ -93,9 +109,21 @@ pub fn App::handle_platform_event(
         ""
       }
     }
-    MouseEvent(..) =>
-      // Mouse event translation (TODO: implement mouse protocol)
-      ""
+    MouseEvent(button~, kind~, ..) =>
+      if button == -2 {
+        // Scroll wheel event: kind contains the delta from the platform.
+        // Positive delta = scroll up (back into history).
+        // Negative delta = scroll down (toward live).
+        if kind > 0 {
+          self.terminal.scroll_viewport_up(kind)
+        } else if kind < 0 {
+          self.terminal.scroll_viewport_down(-kind)
+        }
+        ""
+      } else {
+        // Other mouse events (TODO: implement mouse protocol)
+        ""
+      }
     Error(_msg) => ""
   }
 }

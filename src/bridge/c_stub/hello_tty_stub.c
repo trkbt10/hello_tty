@@ -87,6 +87,13 @@
 #define mbt_ffi_handle_key_for    _M0FP47trkbt1010hello__tty3src6bridge21ffi__handle__key__for
 #define mbt_ffi_resize_session    _M0FP47trkbt1010hello__tty3src6bridge20ffi__resize__session
 
+// Viewport / Scrollback
+#define mbt_ffi_scroll_viewport_up    _M0FP47trkbt1010hello__tty3src6bridge25ffi__scroll__viewport__up
+#define mbt_ffi_scroll_viewport_down  _M0FP47trkbt1010hello__tty3src6bridge27ffi__scroll__viewport__down
+#define mbt_ffi_reset_viewport        _M0FP47trkbt1010hello__tty3src6bridge20ffi__reset__viewport
+#define mbt_ffi_get_viewport_offset   _M0FP47trkbt1010hello__tty3src6bridge26ffi__get__viewport__offset
+#define mbt_ffi_get_scrollback_length _M0FP47trkbt1010hello__tty3src6bridge28ffi__get__scrollback__length
+
 // ---------- MoonBit runtime interface ----------
 
 #include "moonbit.h"
@@ -164,6 +171,13 @@ extern int32_t         mbt_ffi_process_output_for(moonbit_bytes_t session_id, mo
 extern moonbit_bytes_t mbt_ffi_get_grid_for(moonbit_bytes_t session_id);
 extern moonbit_bytes_t mbt_ffi_handle_key_for(moonbit_bytes_t session_id, moonbit_bytes_t key, moonbit_bytes_t mods);
 extern int32_t         mbt_ffi_resize_session(moonbit_bytes_t session_id, moonbit_bytes_t rows, moonbit_bytes_t cols);
+
+// Viewport / Scrollback
+extern int32_t         mbt_ffi_scroll_viewport_up(moonbit_bytes_t session_id, moonbit_bytes_t lines);
+extern int32_t         mbt_ffi_scroll_viewport_down(moonbit_bytes_t session_id, moonbit_bytes_t lines);
+extern int32_t         mbt_ffi_reset_viewport(moonbit_bytes_t session_id);
+extern int32_t         mbt_ffi_get_viewport_offset(moonbit_bytes_t session_id);
+extern int32_t         mbt_ffi_get_scrollback_length(moonbit_bytes_t session_id);
 
 // ---------- Initialization ----------
 
@@ -535,4 +549,38 @@ int32_t hello_tty_resize_session(const char *session_id, const char *rows, const
     moonbit_bytes_t rb = cstr_to_moonbit_bytes(rows);
     moonbit_bytes_t cb = cstr_to_moonbit_bytes(cols);
     return mbt_ffi_resize_session(sb, rb, cb);
+}
+
+// ---------- Viewport / Scrollback ----------
+
+int32_t hello_tty_scroll_viewport_up(const char *session_id, const char *lines) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    moonbit_bytes_t lb = cstr_to_moonbit_bytes(lines);
+    return mbt_ffi_scroll_viewport_up(sb, lb);
+}
+
+int32_t hello_tty_scroll_viewport_down(const char *session_id, const char *lines) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    moonbit_bytes_t lb = cstr_to_moonbit_bytes(lines);
+    return mbt_ffi_scroll_viewport_down(sb, lb);
+}
+
+int32_t hello_tty_reset_viewport(const char *session_id) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    return mbt_ffi_reset_viewport(sb);
+}
+
+int32_t hello_tty_get_viewport_offset(const char *session_id) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    return mbt_ffi_get_viewport_offset(sb);
+}
+
+int32_t hello_tty_get_scrollback_length(const char *session_id) {
+    ensure_init();
+    moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
+    return mbt_ffi_get_scrollback_length(sb);
 }

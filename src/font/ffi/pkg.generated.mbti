@@ -1,0 +1,20 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "trkbt10/hello_tty/src/font/ffi"
+
+// Values
+pub fn font_get_metrics(FixedArray[Int]) -> Int
+
+pub fn font_init(Bytes, Int, Int) -> Int
+
+pub fn font_rasterize(Int, Int, Int, FixedArray[Int], FixedArray[Byte], Int) -> Int
+
+pub fn font_shutdown() -> Unit
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits
+

@@ -2,6 +2,7 @@
 package "trkbt10/hello_tty/src/renderer"
 
 import {
+  "trkbt10/hello_tty/src/font",
   "trkbt10/hello_tty/src/terminal",
 }
 
@@ -9,22 +10,18 @@ import {
 pub fn resolve_color(@terminal.Color, RendererConfig, Bool) -> RgbaColor
 
 // Errors
+pub suberror GpuError {
+  InitFailed(String)
+  FontError(String)
+  RenderError(String)
+}
 
 // Types and methods
-pub struct CachedGlyph {
-  atlas_x : Int
-  atlas_y : Int
-  width : Int
-  height : Int
-  bearing_x : Int
-  bearing_y : Int
-  advance : Int
-} derive(Show)
-
 pub struct CellQuad {
   row : Int
   col : Int
-  glyph : GlyphKey?
+  cell_cols : Int
+  glyph : @font.GlyphKey?
   fg : RgbaColor
   bg : RgbaColor
   attrs_flags : Int
@@ -38,12 +35,22 @@ pub struct CursorQuad {
   visible : Bool
 } derive(Show)
 
-pub struct GlyphKey {
-  codepoint : Int
-  bold : Bool
-  italic : Bool
-  font_size : Int
-} derive(Eq, Show)
+pub struct GpuBackend {
+  config : RendererConfig
+  font : @font.FontEngine
+  mut device_initialized : Bool
+}
+pub fn GpuBackend::create_surface(Self, Int, Int, Int) -> Int raise GpuError
+pub fn GpuBackend::destroy_surface(Self, Int) -> Unit
+pub fn GpuBackend::execute_frame(Self, Array[RenderCommand]) -> Unit raise GpuError
+pub fn GpuBackend::execute_frame_on(Self, Int, Array[RenderCommand]) -> Unit raise GpuError
+pub fn GpuBackend::get_cell_size(Self) -> (Int, Int)
+pub fn GpuBackend::init(Self, Int, Int, Int) -> Unit raise GpuError
+pub fn GpuBackend::init_device(Self) -> Unit raise GpuError
+pub fn GpuBackend::new(config? : RendererConfig, font? : @font.FontEngine) -> Self
+pub fn GpuBackend::resize(Self, Int, Int) -> Unit raise GpuError
+pub fn GpuBackend::resize_surface(Self, Int, Int, Int) -> Unit raise GpuError
+pub fn GpuBackend::shutdown(Self) -> Unit
 
 pub(all) enum RenderCommand {
   Clear(RgbaColor)
@@ -54,16 +61,16 @@ pub(all) enum RenderCommand {
 
 pub struct Renderer {
   config : RendererConfig
-  atlas : TextureAtlas
+  atlas : @font.TextureAtlas
 }
 pub fn Renderer::calculate_grid_size(Self, Int, Int) -> (Int, Int)
 pub fn Renderer::calculate_window_size(Self, Int, Int) -> (Int, Int)
-pub fn Renderer::get_atlas(Self) -> TextureAtlas
+pub fn Renderer::get_atlas(Self) -> @font.TextureAtlas
 pub fn Renderer::get_config(Self) -> RendererConfig
 pub fn Renderer::new(config? : RendererConfig) -> Self
 pub fn Renderer::render(Self, @terminal.Terminal) -> Array[RenderCommand]
 
-pub struct RendererConfig {
+pub(all) struct RendererConfig {
   cell_width : Int
   cell_height : Int
   font_size : Int
@@ -81,41 +88,9 @@ pub struct RgbaColor {
   a : Byte
 } derive(Eq, Show)
 pub fn RgbaColor::black() -> Self
-pub fn RgbaColor::opaque(Byte, Byte, Byte) -> Self
+pub fn RgbaColor::from_rgb(Byte, Byte, Byte) -> Self
+pub fn RgbaColor::new(Byte, Byte, Byte, Byte) -> Self
 pub fn RgbaColor::white() -> Self
-
-pub struct TextureAtlas {
-  width : Int
-  height : Int
-  cache : Map[String, CachedGlyph]
-  mut cursor_x : Int
-  mut cursor_y : Int
-  mut row_height : Int
-  mut dirty : Bool
-}
-pub fn TextureAtlas::allocate(Self, GlyphKey, Int, Int, Int, Int, Int) -> CachedGlyph?
-pub fn TextureAtlas::clear(Self) -> Unit
-pub fn TextureAtlas::fill_ratio(Self) -> Float
-pub fn TextureAtlas::glyph_count(Self) -> Int
-pub fn TextureAtlas::is_dirty(Self) -> Bool
-pub fn TextureAtlas::lookup(Self, GlyphKey) -> CachedGlyph?
-pub fn TextureAtlas::mark_clean(Self) -> Unit
-pub fn TextureAtlas::new(Int, Int) -> Self
-
-pub struct Vertex {
-  x : Float
-  y : Float
-  u : Float
-  v : Float
-  fg_r : Float
-  fg_g : Float
-  fg_b : Float
-  fg_a : Float
-  bg_r : Float
-  bg_g : Float
-  bg_b : Float
-  bg_a : Float
-} derive(Show)
 
 // Type aliases
 

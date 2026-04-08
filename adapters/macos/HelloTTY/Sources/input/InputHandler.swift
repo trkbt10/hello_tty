@@ -32,6 +32,9 @@ class InputHandler {
     var selectionAnchor: (row: Int, col: Int)?
     var selectionEnd: (row: Int, col: Int)?
 
+    /// Callback invoked when Cmd+F is pressed. Set by the view hierarchy.
+    var onFindRequested: (() -> Void)?
+
     init(state: TerminalState) {
         self.state = state
     }
@@ -74,10 +77,26 @@ class InputHandler {
             }
             return true
 
+        case .clipboardCut:
+            if let text = selectedText() {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            }
+            clearSelection()
+            return true
+
         case .clipboardPaste:
             if let text = NSPasteboard.general.string(forType: .string) {
                 state.sendText(text)
             }
+            return true
+
+        case .selectAll:
+            selectAll()
+            return true
+
+        case .findInTerminal:
+            onFindRequested?()
             return true
 
         case .forwardToIme:
@@ -181,6 +200,13 @@ class InputHandler {
     func clearSelection() {
         selectionAnchor = nil
         selectionEnd = nil
+    }
+
+    /// Select all visible grid content.
+    func selectAll() {
+        guard let state = state else { return }
+        selectionAnchor = (row: 0, col: 0)
+        selectionEnd = (row: state.currentRows - 1, col: state.currentCols - 1)
     }
 
     func selectedText() -> String? {

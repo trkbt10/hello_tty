@@ -6,6 +6,8 @@ pub fn pty_close(Int) -> Unit
 
 pub fn pty_exec_shell(Bytes, Int) -> Unit
 
+pub fn pty_fork_exec(Bytes, Int, Int, Int, FixedArray[Int]) -> Int
+
 pub fn pty_forkpty(FixedArray[Int]) -> Int
 
 pub fn pty_get_winsize(Int, FixedArray[Int]) -> Int

@@ -105,6 +105,7 @@ pub fn Renderer::render(
   let grid = terminal.get_grid()
   let cursor = terminal.get_cursor()
   let modes = terminal.get_modes()
+  let viewport_offset = terminal.get_viewport_offset()
   // Clear with background color
   let bg = if modes.reverse_video {
     self.config.default_fg
@@ -112,10 +113,13 @@ pub fn Renderer::render(
     self.config.default_bg
   }
   commands.push(Clear(bg))
-  // Build cell quads
+  // Build cell quads — use viewport rows when scrolled back
   let cell_quads : Array[CellQuad] = []
   for row in 0..<grid.rows {
-    let line = grid.lines[row]
+    let line = match terminal.get_viewport_row(row) {
+      Some(r) => r
+      None => continue
+    }
     for col in 0..<grid.cols {
       let cell = line.get(col)
       let mut fg_color = cell.fg
@@ -156,8 +160,8 @@ pub fn Renderer::render(
     }
   }
   commands.push(DrawCells(cell_quads))
-  // Draw cursor
-  if cursor.visible {
+  // Draw cursor only when viewing live (not scrolled back)
+  if cursor.visible && viewport_offset == 0 {
     let cursor_fg = self.config.default_fg
     commands.push(
       DrawCursor({

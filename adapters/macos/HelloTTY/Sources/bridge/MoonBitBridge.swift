@@ -61,6 +61,12 @@ class MoonBitBridge {
     private typealias HandleKeyForFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
     private typealias ResizeSessionFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
 
+    // Viewport / Scrollback
+    private typealias ScrollViewportFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
+    private typealias ResetViewportFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+    private typealias GetViewportOffsetFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+    private typealias GetScrollbackLengthFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+
     // Theme
     private typealias GetThemeFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
 
@@ -136,6 +142,13 @@ class MoonBitBridge {
     private var fnGetGridFor: GetGridForFn?
     private var fnHandleKeyFor: HandleKeyForFn?
     private var fnResizeSession: ResizeSessionFn?
+
+    // Viewport / Scrollback
+    private var fnScrollViewportUp: ScrollViewportFn?
+    private var fnScrollViewportDown: ScrollViewportFn?
+    private var fnResetViewport: ResetViewportFn?
+    private var fnGetViewportOffset: GetViewportOffsetFn?
+    private var fnGetScrollbackLength: GetScrollbackLengthFn?
 
     // Theme & metrics
     private var fnGetTheme: GetThemeFn?
@@ -298,6 +311,13 @@ class MoonBitBridge {
         fnGetGridFor = sym("hello_tty_get_grid_for")
         fnHandleKeyFor = sym("hello_tty_handle_key_for")
         fnResizeSession = sym("hello_tty_resize_session")
+
+        // Viewport / Scrollback
+        fnScrollViewportUp = sym("hello_tty_scroll_viewport_up")
+        fnScrollViewportDown = sym("hello_tty_scroll_viewport_down")
+        fnResetViewport = sym("hello_tty_reset_viewport")
+        fnGetViewportOffset = sym("hello_tty_get_viewport_offset")
+        fnGetScrollbackLength = sym("hello_tty_get_scrollback_length")
 
         // Layout resize (MoonBit SoT)
         fnResizeLayout = sym("hello_tty_resize_layout")
@@ -492,6 +512,9 @@ class MoonBitBridge {
         case forwardToIme
         case clipboardCopy
         case clipboardPaste
+        case clipboardCut
+        case selectAll
+        case findInTerminal
         case splitRight
         case splitDown
         case nextSplit
@@ -509,6 +532,9 @@ class MoonBitBridge {
             case 1: return .forwardToIme
             case 2: return .clipboardCopy
             case 3: return .clipboardPaste
+            case 4: return .clipboardCut
+            case 5: return .selectAll
+            case 6: return .findInTerminal
             case 10: return .splitRight
             case 11: return .splitDown
             case 12: return .nextSplit
@@ -834,6 +860,43 @@ class MoonBitBridge {
             }
         }
         return result == 0
+    }
+
+    // MARK: - Viewport / Scrollback
+
+    /// Scroll a session's viewport up (back into history). Returns new offset.
+    func scrollViewportUp(sessionId: Int32, lines: Int) -> Int32 {
+        guard let fn = fnScrollViewportUp else { return -1 }
+        return "\(sessionId)".withCString { s in
+            "\(lines)".withCString { l in fn(s, l) }
+        }
+    }
+
+    /// Scroll a session's viewport down (toward live). Returns new offset.
+    func scrollViewportDown(sessionId: Int32, lines: Int) -> Int32 {
+        guard let fn = fnScrollViewportDown else { return -1 }
+        return "\(sessionId)".withCString { s in
+            "\(lines)".withCString { l in fn(s, l) }
+        }
+    }
+
+    /// Reset a session's viewport to live view.
+    func resetViewport(sessionId: Int32) -> Bool {
+        guard let fn = fnResetViewport else { return false }
+        let result = "\(sessionId)".withCString { fn($0) }
+        return result == 0
+    }
+
+    /// Get a session's current viewport offset (0=live).
+    func getViewportOffset(sessionId: Int32) -> Int32 {
+        guard let fn = fnGetViewportOffset else { return -1 }
+        return "\(sessionId)".withCString { fn($0) }
+    }
+
+    /// Get a session's scrollback length (total lines in history).
+    func getScrollbackLength(sessionId: Int32) -> Int32 {
+        guard let fn = fnGetScrollbackLength else { return -1 }
+        return "\(sessionId)".withCString { fn($0) }
     }
 
     // MARK: - Layout Resize (MoonBit SoT)

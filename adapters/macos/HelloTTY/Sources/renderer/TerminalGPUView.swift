@@ -195,8 +195,9 @@ class TerminalGPUView: TerminalBaseView {
         if !result {
             NSLog("hello_tty: renderFrame FAILED for session %d, surfaceId %d", state.sessionId, surfaceId)
         }
-        // Draw IME composition overlay if needed (CoreGraphics on top of Metal)
+        // Draw overlays on top of Metal (selection highlight, IME composition)
         DispatchQueue.main.async { [weak self] in
+            self?.updateSelectionOverlay()
             self?.updateIMEOverlay()
         }
     }
@@ -223,6 +224,74 @@ class TerminalGPUView: TerminalBaseView {
     /// Mark that the terminal state changed and needs re-rendering.
     func setNeedsRender() {
         needsRender = true
+    }
+
+    // MARK: - Selection Overlay
+
+    private var selectionOverlayLayer: CALayer?
+
+    private func updateSelectionOverlay() {
+        guard let input = input,
+              let anchor = input.selectionAnchor,
+              let end = input.selectionEnd,
+              let state = terminalState
+        else {
+            selectionOverlayLayer?.removeFromSuperlayer()
+            selectionOverlayLayer = nil
+            return
+        }
+
+        let cellW = state.cellWidth
+        let cellH = state.cellHeight
+
+        // Normalize selection direction
+        let (r1, c1, r2, c2): (Int, Int, Int, Int)
+        if anchor.row < end.row || (anchor.row == end.row && anchor.col <= end.col) {
+            (r1, c1, r2, c2) = (anchor.row, anchor.col, end.row, end.col)
+        } else {
+            (r1, c1, r2, c2) = (end.row, end.col, anchor.row, anchor.col)
+        }
+
+        let overlay: CALayer
+        if let existing = selectionOverlayLayer {
+            overlay = existing
+            // Remove old sublayers
+            overlay.sublayers?.forEach { $0.removeFromSuperlayer() }
+        } else {
+            overlay = CALayer()
+            overlay.zPosition = 50
+            self.layer?.addSublayer(overlay)
+            selectionOverlayLayer = overlay
+        }
+
+        overlay.frame = bounds
+
+        // Selection color from theme (semi-transparent blue)
+        let selColor = state.theme.selection
+
+        // Draw selection rectangles for each row
+        for row in r1...r2 {
+            let cStart: Int
+            let cEnd: Int
+            if row == r1 && row == r2 {
+                cStart = c1; cEnd = c2
+            } else if row == r1 {
+                cStart = c1; cEnd = state.currentCols - 1
+            } else if row == r2 {
+                cStart = 0; cEnd = c2
+            } else {
+                cStart = 0; cEnd = state.currentCols - 1
+            }
+
+            let x = CGFloat(cStart) * cellW
+            let y = bounds.height - CGFloat(row + 1) * cellH
+            let w = CGFloat(cEnd - cStart + 1) * cellW
+
+            let rect = CALayer()
+            rect.frame = CGRect(x: x, y: y, width: w, height: cellH)
+            rect.backgroundColor = selColor.cgColor
+            overlay.addSublayer(rect)
+        }
     }
 
     // MARK: - IME Composition Overlay
@@ -329,5 +398,22 @@ class TerminalGPUView: TerminalBaseView {
         super.unmarkText()
         imeOverlayLayer?.removeFromSuperlayer()
         imeOverlayLayer = nil
+    }
+
+    // MARK: - Mouse events trigger selection overlay update
+
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        needsRender = true
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        super.mouseDragged(with: event)
+        updateSelectionOverlay()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        updateSelectionOverlay()
     }
 }

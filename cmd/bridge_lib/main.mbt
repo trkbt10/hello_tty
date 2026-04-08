@@ -73,6 +73,15 @@ fn main {
   let _st2 = @bridge.ffi_get_grid_for(@utf8.encode("1"))
   let _st3 = @bridge.ffi_handle_key_for(@utf8.encode("1"), key, mods)
   let _st4 = @bridge.ffi_resize_session(@utf8.encode("1"), rows, cols)
+  // Viewport / Scrollback
+  let _vp1 = @bridge.ffi_scroll_viewport_up(@utf8.encode("1"), @utf8.encode("5"))
+  let _vp2 = @bridge.ffi_scroll_viewport_down(
+    @utf8.encode("1"),
+    @utf8.encode("5"),
+  )
+  let _vp3 = @bridge.ffi_reset_viewport(@utf8.encode("1"))
+  let _vp4 = @bridge.ffi_get_viewport_offset(@utf8.encode("1"))
+  let _vp5 = @bridge.ffi_get_scrollback_length(@utf8.encode("1"))
   let _px2g = @bridge.ffi_pixel_to_grid(
     @utf8.encode("100"),
     @utf8.encode("200"),

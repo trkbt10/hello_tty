@@ -73,6 +73,12 @@ fn Keymap::defaults() -> Keymap {
   m[{ key_code: 0x63, modifiers: mod_super }] = ClipboardCopy
   // Cmd+V (0x76 = 'v')
   m[{ key_code: 0x76, modifiers: mod_super }] = ClipboardPaste
+  // Cmd+X (0x78 = 'x')
+  m[{ key_code: 0x78, modifiers: mod_super }] = ClipboardCut
+  // Cmd+A (0x61 = 'a')
+  m[{ key_code: 0x61, modifiers: mod_super }] = SelectAll
+  // Cmd+F (0x66 = 'f')
+  m[{ key_code: 0x66, modifiers: mod_super }] = FindInTerminal
   // ---- Split management ----
   // Cmd+D (0x64 = 'd') → split right (iTerm2/Ghostty standard)
   m[{ key_code: 0x64, modifiers: mod_super }] = SplitRight

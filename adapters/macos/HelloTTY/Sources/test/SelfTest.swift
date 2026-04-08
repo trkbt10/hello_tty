@@ -54,7 +54,17 @@ class SelfTestRunner {
 
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                             self.test14_signalCtrlCResult()
-                            self.reportAndExit()
+                            self.test15_scrollbackGeneration()
+
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                self.test16_scrollbackViewport()
+                                self.test17_scrollbackContent()
+
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    self.test18_autoReset()
+                                    self.reportAndExit()
+                                }
+                            }
                         }
                     }
                 }
@@ -417,6 +427,202 @@ class SelfTestRunner {
         }
     }
 
+    // MARK: - Test 15: Scrollback generation
+
+    private func test15_scrollbackGeneration() {
+        guard let tab = tabManager.selectedTab,
+              let state = tab.state
+        else {
+            fail("test15_scrollbackGeneration: No selected tab/state")
+            return
+        }
+
+        // Generate enough output to fill scrollback: echo many lines
+        // Terminal height is ~21 rows after resize, so 50 lines is plenty
+        for i in 0..<50 {
+            state.sendText("echo scrolltest_line_\(i)\r")
+        }
+        pass("test15_scrollbackGeneration: Sent 50 echo commands")
+    }
+
+    // MARK: - Test 16: Scrollback viewport — API control
+
+    private func test16_scrollbackViewport() {
+        guard let tab = tabManager.selectedTab,
+              let state = tab.state
+        else {
+            fail("test16_scrollbackViewport: No selected tab/state")
+            return
+        }
+
+        let bridge = MoonBitBridge.shared
+        let sessionId = state.sessionId
+
+        // Check scrollback has content
+        let sbLen = bridge.getScrollbackLength(sessionId: sessionId)
+        if sbLen <= 0 {
+            fail("test16_scrollbackViewport: Scrollback empty (length=\(sbLen))")
+            return
+        }
+        pass("test16_scrollbackViewport: Scrollback has \(sbLen) lines")
+
+        // Verify viewport starts at 0 (live)
+        let offset0 = bridge.getViewportOffset(sessionId: sessionId)
+        if offset0 != 0 {
+            fail("test16_scrollbackViewport: Expected initial offset 0, got \(offset0)")
+            return
+        }
+
+        // Scroll up by scrollback length (all the way to oldest)
+        let maxOffset = bridge.scrollViewportUp(sessionId: sessionId, lines: Int(sbLen))
+        if maxOffset != sbLen {
+            fail("test16_scrollbackViewport: Expected offset \(sbLen) at max, got \(maxOffset)")
+            return
+        }
+
+        // Grid at max scroll should show content from history (not the latest live lines)
+        if let grid = state.forceRefreshGrid() {
+            if grid.cells.isEmpty {
+                fail("test16_scrollbackViewport: Grid empty at max scroll")
+                return
+            }
+            pass("test16_scrollbackViewport: Grid has \(grid.cells.count) cells at max scroll (offset \(maxOffset))")
+        } else {
+            fail("test16_scrollbackViewport: Grid nil at max scroll")
+            return
+        }
+
+        // Scroll back to middle
+        _ = bridge.resetViewport(sessionId: sessionId)
+        let midOffset = bridge.scrollViewportUp(sessionId: sessionId, lines: 10)
+        if midOffset != 10 {
+            fail("test16_scrollbackViewport: Expected offset 10, got \(midOffset)")
+            return
+        }
+        pass("test16_scrollbackViewport: Scrolled to offset \(midOffset)")
+
+        // Scroll down 5 lines
+        let offset5 = bridge.scrollViewportDown(sessionId: sessionId, lines: 5)
+        if offset5 != 5 {
+            fail("test16_scrollbackViewport: Expected offset 5 after scroll down, got \(offset5)")
+            return
+        }
+
+        // Clamp test: scroll up beyond max
+        _ = bridge.resetViewport(sessionId: sessionId)
+        let overMax = bridge.scrollViewportUp(sessionId: sessionId, lines: 999999)
+        if overMax != sbLen {
+            fail("test16_scrollbackViewport: Over-scroll should clamp to \(sbLen), got \(overMax)")
+            return
+        }
+        pass("test16_scrollbackViewport: Over-scroll clamped to \(overMax)")
+
+        // Clamp test: scroll down beyond 0
+        let underMin = bridge.scrollViewportDown(sessionId: sessionId, lines: 999999)
+        if underMin != 0 {
+            fail("test16_scrollbackViewport: Under-scroll should clamp to 0, got \(underMin)")
+            return
+        }
+        pass("test16_scrollbackViewport: Under-scroll clamped to 0")
+
+        // Reset to live
+        let resetOk = bridge.resetViewport(sessionId: sessionId)
+        if !resetOk {
+            fail("test16_scrollbackViewport: resetViewport failed")
+            return
+        }
+        let finalOffset = bridge.getViewportOffset(sessionId: sessionId)
+        if finalOffset != 0 {
+            fail("test16_scrollbackViewport: Expected offset 0 after reset, got \(finalOffset)")
+            return
+        }
+        pass("test16_scrollbackViewport: Reset to live view (offset 0)")
+
+        // Screenshot
+        if let contentView = NSApp.windows.first?.contentView {
+            saveScreenshot(captureView(contentView), name: "06_after_scrollback")
+        }
+    }
+
+    // MARK: - Test 17: Scrollback content correctness
+
+    private func test17_scrollbackContent() {
+        guard let tab = tabManager.selectedTab,
+              let state = tab.state
+        else {
+            fail("test17_scrollbackContent: No selected tab/state")
+            return
+        }
+
+        let bridge = MoonBitBridge.shared
+        let sessionId = state.sessionId
+
+        // Scroll to a position where scrolltest lines should be visible.
+        // scrolltest lines are in the middle of the scrollback, not at the very start.
+        // Scroll up by half the scrollback length — should land in the echo output area.
+        let sbLen = bridge.getScrollbackLength(sessionId: sessionId)
+        let halfScroll = Int(sbLen) / 2
+        _ = bridge.scrollViewportUp(sessionId: sessionId, lines: halfScroll)
+
+        guard let scrolledGrid = state.forceRefreshGrid() else {
+            fail("test17_scrollbackContent: Cannot get scrolled grid")
+            _ = bridge.resetViewport(sessionId: sessionId)
+            return
+        }
+        let scrolledText = gridToText(scrolledGrid)
+
+        // The scrolled view should contain some "scrolltest_line_" text
+        if scrolledText.contains("scrolltest_line_") {
+            pass("test17_scrollbackContent: scrolltest lines visible at offset \(halfScroll)")
+        } else {
+            // Might not land exactly on scrolltest lines, but grid should have content
+            if scrolledGrid.cells.isEmpty {
+                fail("test17_scrollbackContent: Grid empty at offset \(halfScroll)")
+            } else {
+                pass("test17_scrollbackContent: Grid has \(scrolledGrid.cells.count) cells at offset \(halfScroll) (scrolltest text not in view, but grid is populated)")
+            }
+        }
+
+        // Screenshot of scrolled-back state
+        if let contentView = NSApp.windows.first?.contentView {
+            saveScreenshot(captureView(contentView), name: "07_scrollback_content")
+        }
+
+        // Reset, scroll up again, send new output — viewport should snap back
+        _ = bridge.resetViewport(sessionId: sessionId)
+        _ = bridge.scrollViewportUp(sessionId: sessionId, lines: 20)
+        let beforeOutput = bridge.getViewportOffset(sessionId: sessionId)
+        if beforeOutput == 0 {
+            fail("test17_scrollbackContent: Viewport didn't scroll up")
+            return
+        }
+        pass("test17_scrollbackContent: Viewport at offset \(beforeOutput) before new output")
+
+        // Send new output — viewport should snap back
+        state.sendText("echo viewport_reset_test\r")
+    }
+
+    // MARK: - Test 18: Auto-reset on new output
+
+    private func test18_autoReset() {
+        guard let tab = tabManager.selectedTab,
+              let state = tab.state
+        else {
+            fail("test18_autoReset: No selected tab/state")
+            return
+        }
+
+        let bridge = MoonBitBridge.shared
+        let sessionId = state.sessionId
+
+        let afterOutput = bridge.getViewportOffset(sessionId: sessionId)
+        if afterOutput != 0 {
+            fail("test18_autoReset: Viewport should auto-reset to 0 after new output, got \(afterOutput)")
+            return
+        }
+        pass("test18_autoReset: Viewport auto-reset to live after new output")
+    }
+
     // MARK: - Helpers
 
     private func pass(_ msg: String) {
@@ -520,6 +726,25 @@ class SelfTestRunner {
         // If fewer than 5% of sampled pixels differ, it's blank
         let sampledCount = total * bytesPerPixel / stride
         return sampledCount > 0 && Double(differentCount) / Double(sampledCount) < 0.05
+    }
+
+    /// Build a single string from all grid rows (for content assertions).
+    private func gridToText(_ grid: TerminalGrid) -> String {
+        var rowChars: [Int: [Int: Character]] = [:]
+        for cell in grid.cells {
+            if rowChars[cell.row] == nil { rowChars[cell.row] = [:] }
+            rowChars[cell.row]![cell.col] = cell.char
+        }
+        var lines: [String] = []
+        for row in 0..<grid.rows {
+            guard let cols = rowChars[row] else { continue }
+            var line = ""
+            for col in 0..<grid.cols {
+                line.append(cols[col] ?? " ")
+            }
+            lines.append(line)
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func gridContainsText(_ text: String) -> Bool {

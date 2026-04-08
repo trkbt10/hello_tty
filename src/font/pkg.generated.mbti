@@ -1,0 +1,86 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "trkbt10/hello_tty/src/font"
+
+// Values
+
+// Errors
+pub(all) suberror FontError {
+  FontInitFailed(String)
+  FontRasterizeError(String)
+}
+
+// Types and methods
+pub(all) struct CachedGlyph {
+  atlas_x : Int
+  atlas_y : Int
+  width : Int
+  height : Int
+  bearing_x : Int
+  bearing_y : Int
+  advance : Int
+} derive(Show)
+
+pub(all) struct FontConfig {
+  font_name : String
+  font_size : Int
+  atlas_size : Int
+} derive(Show)
+pub fn FontConfig::default() -> Self
+
+pub struct FontEngine {
+  config : FontConfig
+  atlas : TextureAtlas
+  mut metrics : FontMetrics
+  max_glyph_buf : Int
+  mut initialized : Bool
+}
+pub fn FontEngine::ensure_glyph(Self, GlyphKey) -> RasterizedGlyph?
+pub fn FontEngine::get_atlas(Self) -> TextureAtlas
+pub fn FontEngine::get_metrics(Self) -> FontMetrics
+pub fn FontEngine::init(Self) -> Unit raise FontError
+pub fn FontEngine::new(config? : FontConfig) -> Self
+pub fn FontEngine::shutdown(Self) -> Unit
+
+pub(all) struct FontMetrics {
+  cell_width : Int
+  cell_height : Int
+  ascent : Int
+  descent : Int
+} derive(Eq, Show)
+
+pub(all) struct GlyphKey {
+  codepoint : Int
+  bold : Bool
+  italic : Bool
+  font_size : Int
+} derive(Eq, Show)
+
+pub(all) struct RasterizedGlyph {
+  cached : CachedGlyph
+  bitmap : FixedArray[Byte]
+  bitmap_width : Int
+  bitmap_height : Int
+  is_new : Bool
+} derive(Show)
+
+pub struct TextureAtlas {
+  width : Int
+  height : Int
+  cache : Map[String, CachedGlyph]
+  mut cursor_x : Int
+  mut cursor_y : Int
+  mut row_height : Int
+  mut dirty : Bool
+}
+pub fn TextureAtlas::allocate(Self, GlyphKey, Int, Int, Int, Int, Int) -> CachedGlyph?
+pub fn TextureAtlas::clear(Self) -> Unit
+pub fn TextureAtlas::glyph_count(Self) -> Int
+pub fn TextureAtlas::is_dirty(Self) -> Bool
+pub fn TextureAtlas::lookup(Self, GlyphKey) -> CachedGlyph?
+pub fn TextureAtlas::mark_clean(Self) -> Unit
+pub fn TextureAtlas::new(Int, Int) -> Self
+
+// Type aliases
+
+// Traits
+

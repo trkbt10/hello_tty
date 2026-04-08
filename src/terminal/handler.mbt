@@ -11,6 +11,9 @@ pub struct Terminal {
   /// Terminal dimensions.
   mut rows : Int
   mut cols : Int
+  /// Viewport scroll offset for scrollback viewing.
+  /// 0 = live (showing the current grid), >0 = scrolled back N lines into history.
+  mut viewport_offset : Int
 }
 
 ///|
@@ -34,6 +37,7 @@ pub fn Terminal::new(
     title: "",
     rows,
     cols,
+    viewport_offset: 0,
   }
 }
 
@@ -61,6 +65,11 @@ pub fn Terminal::handle_events(
   self : Terminal,
   events : Array[@vt_parser.ParserEvent],
 ) -> Unit {
+  if events.length() > 0 {
+    // New output from PTY snaps viewport back to live view,
+    // matching iTerm2/Ghostty behavior.
+    self.viewport_offset = 0
+  }
   for i in 0..<events.length() {
     self.handle_event(events[i])
   }
@@ -728,6 +737,7 @@ pub fn Terminal::reset(self : Terminal) -> Unit {
   self.screen.primary_cursor.move_to(0, 0, self.rows, self.cols)
   self.screen.alternate_cursor.move_to(0, 0, self.rows, self.cols)
   self.modes = TermModes::default()
+  self.viewport_offset = 0
   // Reset tab stops
   for i in 0..<self.cols {
     self.tab_stops[i] = i % 8 == 0
@@ -786,4 +796,79 @@ pub fn Terminal::get_modes(self : Terminal) -> TermModes {
 /// Get the scrollback buffer.
 pub fn Terminal::get_scrollback(self : Terminal) -> Scrollback {
   self.screen.scrollback
+}
+
+///|
+/// Get the current viewport offset (0 = live, >0 = scrolled into history).
+pub fn Terminal::get_viewport_offset(self : Terminal) -> Int {
+  self.viewport_offset
+}
+
+///|
+/// Scroll the viewport up (back into history) by n lines.
+/// Only effective on the primary screen (alternate screen has no scrollback).
+pub fn Terminal::scroll_viewport_up(self : Terminal, n : Int) -> Unit {
+  if self.screen.active != Primary {
+    return
+  }
+  let max_offset = self.screen.scrollback.length()
+  self.viewport_offset = (self.viewport_offset + n).clamp(min=0, max=max_offset)
+}
+
+///|
+/// Scroll the viewport down (toward live) by n lines.
+pub fn Terminal::scroll_viewport_down(self : Terminal, n : Int) -> Unit {
+  self.viewport_offset = (self.viewport_offset - n).clamp(min=0, max=self.viewport_offset)
+}
+
+///|
+/// Reset the viewport to live view.
+pub fn Terminal::reset_viewport(self : Terminal) -> Unit {
+  self.viewport_offset = 0
+}
+
+///|
+/// Get a row for rendering at the given screen position, taking viewport offset
+/// into account. When viewport_offset > 0, top rows come from scrollback.
+///
+/// The viewport maps screen rows as follows:
+///   - The viewport shows (scrollback + grid) content ending at
+///     (scrollback.length - viewport_offset + grid.rows - 1).
+///   - Screen row 0 maps to the oldest visible line.
+///
+/// Returns None if the row is out of range (shouldn't happen in normal use).
+pub fn Terminal::get_viewport_row(self : Terminal, screen_row : Int) -> Row? {
+  let grid = self.screen.active_grid()
+  if self.viewport_offset == 0 {
+    // Live view: just return grid rows directly.
+    if screen_row >= 0 && screen_row < grid.rows {
+      return Some(grid.lines[screen_row])
+    }
+    return None
+  }
+  // Scrolled view: composite scrollback + grid.
+  // Total content = scrollback_lines + grid_rows.
+  // The viewport window is [total - viewport_offset - grid.rows, total - viewport_offset).
+  // But we express it differently: the last visible row (screen_row = rows-1)
+  // corresponds to (scrollback.length - viewport_offset + grid.rows - 1) in absolute index.
+  let scrollback = self.screen.scrollback
+  let sb_len = scrollback.length()
+  // Absolute index of screen_row in the combined (scrollback ++ grid) buffer:
+  // The "bottom" of the viewport is at absolute position (sb_len + grid.rows - 1 - viewport_offset).
+  // screen_row 0 = top of viewport, screen_row (rows-1) = bottom of viewport.
+  let abs_index = sb_len - self.viewport_offset + screen_row
+  if abs_index < 0 {
+    // Before the start of scrollback — return empty row
+    return None
+  }
+  if abs_index < sb_len {
+    // This row is in the scrollback buffer.
+    return scrollback.get(abs_index)
+  }
+  // This row is in the live grid.
+  let grid_index = abs_index - sb_len
+  if grid_index >= 0 && grid_index < grid.rows {
+    return Some(grid.lines[grid_index])
+  }
+  None
 }

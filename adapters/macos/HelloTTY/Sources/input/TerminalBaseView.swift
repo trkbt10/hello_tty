@@ -15,6 +15,10 @@ class TerminalBaseView: NSView, NSTextInputClient {
             if let s = terminalState {
                 input = InputHandler(state: s)
                 input?.tabManager = tabManager
+                searchController = TerminalSearchController(state: s, inputHandler: input!)
+                input?.onFindRequested = { [weak self] in
+                    self?.showSearchBar()
+                }
             }
         }
     }
@@ -26,6 +30,8 @@ class TerminalBaseView: NSView, NSTextInputClient {
     }
 
     private(set) var input: InputHandler?
+    private(set) var searchController: TerminalSearchController?
+    private var searchBarView: SearchBarView?
 
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { true }
@@ -109,6 +115,24 @@ class TerminalBaseView: NSView, NSTextInputClient {
         input?.handleDoCommand(input?.currentEvent)
     }
 
+    // MARK: - Scroll (viewport)
+
+    override func scrollWheel(with event: NSEvent) {
+        guard let state = terminalState else { return }
+        let delta = Int(event.scrollingDeltaY * 3.0)
+        if delta > 0 {
+            _ = state.bridge.scrollViewportUp(sessionId: state.sessionId, lines: delta)
+        } else if delta < 0 {
+            _ = state.bridge.scrollViewportDown(sessionId: state.sessionId, lines: -delta)
+        }
+        // Trigger re-render
+        if let gpuView = self as? TerminalGPUView {
+            gpuView.setNeedsRender()
+        } else {
+            needsDisplay = true
+        }
+    }
+
     // MARK: - Mouse (selection)
 
     override func mouseDown(with event: NSEvent) {
@@ -139,12 +163,65 @@ class TerminalBaseView: NSView, NSTextInputClient {
         needsDisplay = true
     }
 
+    // MARK: - Search Bar
+
+    func showSearchBar() {
+        guard let sc = searchController else { return }
+
+        if let existing = searchBarView {
+            existing.activate()
+            return
+        }
+
+        sc.isActive = true
+
+        let bar = SearchBarView(frame: .zero)
+        bar.searchController = sc
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bar.onClose = { [weak self] in
+            self?.hideSearchBar()
+        }
+        addSubview(bar)
+
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            bar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            bar.heightAnchor.constraint(equalToConstant: 32),
+            bar.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.6),
+            bar.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
+        ])
+
+        searchBarView = bar
+
+        // Delay first responder change slightly to avoid interfering with current event
+        DispatchQueue.main.async {
+            bar.activate()
+        }
+    }
+
+    func hideSearchBar() {
+        searchBarView?.removeFromSuperview()
+        searchBarView = nil
+        searchController?.close()
+        // Return focus to terminal
+        window?.makeFirstResponder(self)
+        // Trigger redraw to clear selection highlights
+        if let gpuView = self as? TerminalGPUView {
+            gpuView.setNeedsRender()
+        } else {
+            needsDisplay = true
+        }
+    }
+
     // MARK: - Context menu
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Copy", action: #selector(copyAction), keyEquivalent: "c"))
         menu.addItem(NSMenuItem(title: "Paste", action: #selector(pasteAction), keyEquivalent: "v"))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Select All", action: #selector(selectAllAction), keyEquivalent: "a"))
+        menu.addItem(NSMenuItem(title: "Find…", action: #selector(findAction), keyEquivalent: "f"))
         return menu
     }
 
@@ -159,5 +236,18 @@ class TerminalBaseView: NSView, NSTextInputClient {
         if let text = NSPasteboard.general.string(forType: .string) {
             terminalState?.sendText(text)
         }
+    }
+
+    @objc private func selectAllAction() {
+        input?.selectAll()
+        if let gpuView = self as? TerminalGPUView {
+            gpuView.setNeedsRender()
+        } else {
+            needsDisplay = true
+        }
+    }
+
+    @objc private func findAction() {
+        showSearchBar()
     }
 }

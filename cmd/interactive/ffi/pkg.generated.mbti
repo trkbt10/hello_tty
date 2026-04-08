@@ -1,0 +1,34 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "trkbt10/hello_tty/cmd/interactive/ffi"
+
+// Values
+pub fn debug_log(Bytes, Int) -> Int
+
+pub fn enable_raw_mode() -> Int
+
+pub fn poll_stdin(Int) -> Int
+
+pub fn pty_session_close(Int) -> Unit
+
+pub fn pty_session_poll(Int, Int) -> Int
+
+pub fn pty_session_read(Int, FixedArray[Byte], Int) -> Int
+
+pub fn pty_session_start(Bytes, Int, Int, FixedArray[Int]) -> Int
+
+pub fn pty_session_write(Int, Bytes, Int) -> Int
+
+pub fn read_stdin(FixedArray[Byte], Int) -> Int
+
+pub fn restore_mode(Int) -> Unit
+
+pub fn write_stdout(Bytes, Int) -> Int
+
+// Errors
+
+// Types and methods
+
+// Type aliases
+
+// Traits
+

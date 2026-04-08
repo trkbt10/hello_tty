@@ -229,6 +229,23 @@ char *hello_tty_handle_key_for(const char *session_id, const char *key_code, con
 // Resize a specific session's terminal.
 int32_t hello_tty_resize_session(const char *session_id, const char *rows, const char *cols);
 
+// ---------- Viewport / Scrollback ----------
+
+// Scroll a session's viewport up (back into history). Returns new offset.
+int32_t hello_tty_scroll_viewport_up(const char *session_id, const char *lines);
+
+// Scroll a session's viewport down (toward live). Returns new offset.
+int32_t hello_tty_scroll_viewport_down(const char *session_id, const char *lines);
+
+// Reset a session's viewport to live view. Returns 0 on success.
+int32_t hello_tty_reset_viewport(const char *session_id);
+
+// Get a session's current viewport offset (0=live).
+int32_t hello_tty_get_viewport_offset(const char *session_id);
+
+// Get a session's scrollback length (total lines in history).
+int32_t hello_tty_get_scrollback_length(const char *session_id);
+
 // ---------- Layout Resize (MoonBit SoT) ----------
 
 // Resize the layout using grid dimensions (rows/cols).
