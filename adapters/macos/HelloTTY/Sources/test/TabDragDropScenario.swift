@@ -1,6 +1,122 @@
 import AppKit
 import CoreGraphics
 
+// MARK: - TabDragDebugObserver
+
+/// Concrete TabDragEventObserver that counts drag lifecycle events.
+/// Injected into AppDelegate for the duration of a scenario run.
+final class TabDragDebugObserver: TabDragEventObserver {
+    private(set) var mouseDownCount = 0
+    private(set) var mouseDraggedCount = 0
+    private(set) var mouseUpCount = 0
+    private(set) var panBeganCount = 0
+    private(set) var panChangedCount = 0
+    private(set) var panEndedCount = 0
+    private(set) var observedDragStartCount = 0
+    private(set) var lastBeginObservedTabDragTabId: Int32?
+
+    func tabMouseDown() { mouseDownCount += 1 }
+    func tabMouseDragged() { mouseDraggedCount += 1 }
+    func tabMouseUp() { mouseUpCount += 1 }
+    func tabPanBegan() { panBeganCount += 1 }
+    func tabPanChanged() { panChangedCount += 1 }
+    func tabPanEnded() { panEndedCount += 1 }
+
+    func recordDragStart(tabId: Int32) {
+        observedDragStartCount += 1
+        lastBeginObservedTabDragTabId = tabId
+    }
+
+    func reset() {
+        mouseDownCount = 0
+        mouseDraggedCount = 0
+        mouseUpCount = 0
+        panBeganCount = 0
+        panChangedCount = 0
+        panEndedCount = 0
+        observedDragStartCount = 0
+        lastBeginObservedTabDragTabId = nil
+    }
+}
+
+// MARK: - TabMouseInteractionView test extension
+
+extension TabMouseInteractionView {
+    /// Drive the drag state machine directly, bypassing the system event tap.
+    /// Only called from scenario runners — never from production paths.
+    func simulateDragForTesting(
+        observer: TabDragDebugObserver,
+        from startScreen: CGPoint,
+        to endScreen: CGPoint,
+        steps: Int = 12,
+        completion: @escaping () -> Void
+    ) {
+        observer.tabMouseDown()
+        // Mirror what a real mouseDown does: record the start point so that
+        // applyDragPhase(.began) picks it up via `mouseDownScreenPoint ?? screenPoint`.
+        mouseDownScreenPoint = startScreen
+        didDragBeyondClickThreshold = false
+        applyDragPhase(.began, screenPoint: startScreen)
+
+        var interpolated: [CGPoint] = []
+        for step in 1...max(steps, 1) {
+            let t = CGFloat(step) / CGFloat(max(steps, 1))
+            interpolated.append(CGPoint(
+                x: startScreen.x + (endScreen.x - startScreen.x) * t,
+                y: startScreen.y + (endScreen.y - startScreen.y) * t
+            ))
+        }
+
+        func sendNext(index: Int) {
+            guard index < interpolated.count else {
+                observer.tabMouseDragged()
+                applyDragPhase(.ended, screenPoint: endScreen)
+                observer.tabMouseUp()
+                completion()
+                return
+            }
+            applyDragPhase(.changed, screenPoint: interpolated[index])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                sendNext(index: index + 1)
+            }
+        }
+
+        sendNext(index: 0)
+    }
+}
+
+// MARK: - Tab interaction view registry (scenario-only)
+
+/// Weak-reference registry of TabMouseInteractionViews, owned by the scenario runner.
+/// This keeps the production AppDelegate free of test-only view lookup infrastructure.
+final class TabInteractionViewRegistry {
+    private final class WeakBox {
+        weak var view: TabMouseInteractionView?
+        init(_ view: TabMouseInteractionView) { self.view = view }
+    }
+
+    private var storage: [Int32: WeakBox] = [:]
+
+    func register(_ view: TabMouseInteractionView, for tabId: Int32) {
+        storage[tabId] = WeakBox(view)
+    }
+
+    func unregister(for tabId: Int32, view: TabMouseInteractionView) {
+        guard storage[tabId]?.view === view else { return }
+        storage.removeValue(forKey: tabId)
+    }
+
+    func view(for tabId: Int32) -> TabMouseInteractionView? {
+        storage[tabId]?.view
+    }
+
+    func registeredIds() -> [Int32] {
+        Array(storage.keys)
+    }
+}
+
+// MARK: - Scenario runner
+
 /// Debug scenario runner for Chrome/VSCode-like tab drag/drop behaviors.
 ///
 /// Launch with:
@@ -14,6 +130,8 @@ final class TabDragDropScenarioRunner {
     private let appDelegate: AppDelegate
     private let tabManager: TabManager
     private let mode: Mode
+    private let observer = TabDragDebugObserver()
+    private let viewRegistry = TabInteractionViewRegistry()
     private var failures: [String] = []
     private var checks = 0
 
@@ -23,7 +141,24 @@ final class TabDragDropScenarioRunner {
         self.mode = mode
     }
 
+    /// Returns a configured runner if the process was launched with a recognised
+    /// --debug-scenario argument, otherwise nil.
+    static func makeIfRequested(appDelegate: AppDelegate, tabManager: TabManager) -> TabDragDropScenarioRunner? {
+        guard let name = scenarioName() else { return nil }
+        switch name {
+        case "tab-dnd":
+            return TabDragDropScenarioRunner(appDelegate: appDelegate, tabManager: tabManager, mode: .full)
+        case "tab-drag-start":
+            return TabDragDropScenarioRunner(appDelegate: appDelegate, tabManager: tabManager, mode: .tabDragStartOnly)
+        default:
+            return nil
+        }
+    }
+
     func run() {
+        // Inject test-only dependencies for the lifetime of this run.
+        appDelegate.tabDragEventObserver = observer
+        appDelegate.tabInteractionViewRegistry = viewRegistry
         NSLog("scenario(tab-dnd): starting mode=%@", String(describing: mode))
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             self.bootstrap()
@@ -82,8 +217,6 @@ final class TabDragDropScenarioRunner {
             let target = TabDragHoverTarget.tabInsertion(workspaceId: primaryWorkspaceId, index: 0)
             self.waitForDropTargetFrame(target, retries: 20) { targetFrame in
                 let resolvedFrame = targetFrame ?? self.tabStripTargetFrame(for: primaryWorkspaceId, index: 0)
-                // Drop near the LEFT edge of the tab bar so tabInsertionIndex resolves to 0.
-                // midX of the whole bar could land past the first tab's midX → index 1 (no-op for tab 2).
                 let dropX = resolvedFrame.minX + 10
                 self.simulateObservedTabDrag(
                     from: CGPoint(x: startFrame.midX, y: startFrame.midY),
@@ -271,18 +404,18 @@ final class TabDragDropScenarioRunner {
                     to: CGPoint(x: targetFrame.midX, y: targetFrame.midY)
                 ) {
                     self.advance(after: 0.8) {
-                    let tabs = self.tabManager.tabs(in: primaryWorkspaceId)
-                    let mergedTab = self.tabManager.tab(for: baseTabId)
-                    let mergedPanelCount = mergedTab?.panels.count ?? 0
-                    if tabs.count == 2 && mergedPanelCount == basePanelCount + 1 {
-                        self.pass("scenario6: dragging one of multiple tabs onto a panel keeps the workspace and expands the target tab as a split")
-                    } else {
-                        self.fail("scenario6: expected two tabs and one extra panel on the target tab, got outcome=\(self.appDelegate.lastTabDragOutcome) tabs=\(tabs.count) panels=\(mergedPanelCount)")
+                        let tabs = self.tabManager.tabs(in: primaryWorkspaceId)
+                        let mergedTab = self.tabManager.tab(for: baseTabId)
+                        let mergedPanelCount = mergedTab?.panels.count ?? 0
+                        if tabs.count == 2 && mergedPanelCount == basePanelCount + 1 {
+                            self.pass("scenario6: dragging one of multiple tabs onto a panel keeps the workspace and expands the target tab as a split")
+                        } else {
+                            self.fail("scenario6: expected two tabs and one extra panel on the target tab, got outcome=\(self.appDelegate.lastTabDragOutcome) tabs=\(tabs.count) panels=\(mergedPanelCount)")
+                        }
+                        self.scenario7_realUIDragOutCreatesDetachedWindow(primaryWorkspaceId: primaryWorkspaceId)
                     }
-                    self.scenario7_realUIDragOutCreatesDetachedWindow(primaryWorkspaceId: primaryWorkspaceId)
                 }
             }
-        }
         }
     }
 
@@ -328,7 +461,7 @@ final class TabDragDropScenarioRunner {
             _ = tabManager.newTab(in: primaryWorkspaceId)
         }
         advance(after: 0.8) {
-            self.appDelegate.resetDebugTabDragSignals()
+            self.observer.reset()
             self.flushWorkspaceWindowLayouts()
             let tabs = self.tabManager.tabs(in: primaryWorkspaceId)
             guard tabs.count >= 2, let draggedTab = tabs.last else {
@@ -336,17 +469,12 @@ final class TabDragDropScenarioRunner {
                 self.reportAndExit()
                 return
             }
-            // Wait for the TabMouseInteractionView to register itself in AppDelegate's registry.
-            // This is the reliable path: direct dispatch to the view bypasses CGEvent routing issues.
             self.waitForTabInteractionView(tabId: draggedTab.tabId, retries: 30) { hasView in
                 guard hasView else {
                     self.fail("scenario8: TabMouseInteractionView for tabId=\(draggedTab.tabId) not registered after waiting")
                     self.reportAndExit()
                     return
                 }
-                // Resolve screen-space coordinates for the drag.
-                // tabManager.frameForTab returns a screen-space rect (set by reportFrame via convertToScreen).
-                // directDispatchTabDrag converts screen → window → view internally.
                 let frame = self.tabManager.frameForTab(tabId: draggedTab.tabId)
                 guard let frame, frame.width > 4, frame.height > 4 else {
                     self.fail("scenario8: tab frame not available for tabId=\(draggedTab.tabId)")
@@ -355,7 +483,7 @@ final class TabDragDropScenarioRunner {
                 }
                 let start = CGPoint(x: frame.midX, y: frame.midY)
                 let end = CGPoint(x: start.x + 48, y: start.y)
-                self.appDelegate.directDispatchTabDrag(
+                self.directDispatchTabDrag(
                     tabId: draggedTab.tabId,
                     from: start,
                     to: end,
@@ -367,12 +495,12 @@ final class TabDragDropScenarioRunner {
                         return
                     }
                     self.advance(after: 0.4) {
-                        if self.appDelegate.debugLastBeginObservedTabDragTabId == draggedTab.tabId,
-                           self.appDelegate.debugObservedTabDragStartCount > 0 {
+                        if self.observer.lastBeginObservedTabDragTabId == draggedTab.tabId,
+                           self.observer.observedDragStartCount > 0 {
                             self.pass("scenario8: direct-dispatch drag starts from the tab button itself")
                             self.scenario9_systemMouseDragOutCreatesDetachedWindow(primaryWorkspaceId: primaryWorkspaceId)
                         } else {
-                            self.fail("scenario8: drag did not start from the tab button, got startedTab=\(String(describing: self.appDelegate.debugLastBeginObservedTabDragTabId)) startCount=\(self.appDelegate.debugObservedTabDragStartCount) mouseDown=\(self.appDelegate.debugTabMouseDownCount) mouseDragged=\(self.appDelegate.debugTabMouseDraggedCount) mouseUp=\(self.appDelegate.debugTabMouseUpCount) panBegan=\(self.appDelegate.debugTabPanBeganCount) panChanged=\(self.appDelegate.debugTabPanChangedCount) panEnded=\(self.appDelegate.debugTabPanEndedCount)")
+                            self.fail("scenario8: drag did not start from the tab button, got startedTab=\(String(describing: self.observer.lastBeginObservedTabDragTabId)) startCount=\(self.observer.observedDragStartCount) mouseDown=\(self.observer.mouseDownCount) mouseDragged=\(self.observer.mouseDraggedCount) mouseUp=\(self.observer.mouseUpCount) panBegan=\(self.observer.panBeganCount) panChanged=\(self.observer.panChangedCount) panEnded=\(self.observer.panEndedCount)")
                             self.reportAndExit()
                         }
                     }
@@ -386,12 +514,12 @@ final class TabDragDropScenarioRunner {
         retries: Int,
         completion: @escaping (Bool) -> Void
     ) {
-        if appDelegate.tabInteractionView(for: tabId) != nil {
+        if viewRegistry.view(for: tabId) != nil {
             completion(true)
             return
         }
         guard retries > 0 else {
-            NSLog("scenario8: waitForTabInteractionView giving up tabId=%d registeredTabIds=%@", tabId, appDelegate.debugRegisteredTabInteractionViewIds() as CVarArg)
+            NSLog("scenario8: waitForTabInteractionView giving up tabId=%d registeredTabIds=%@", tabId, viewRegistry.registeredIds() as CVarArg)
             completion(false)
             return
         }
@@ -406,7 +534,7 @@ final class TabDragDropScenarioRunner {
             _ = tabManager.newTab(in: primaryWorkspaceId)
         }
         advance(after: 0.8) {
-            self.appDelegate.resetDebugTabDragSignals()
+            self.observer.reset()
             self.flushWorkspaceWindowLayouts()
             let tabs = self.tabManager.tabs(in: primaryWorkspaceId)
             guard tabs.count >= 2, let draggedTab = tabs.last else {
@@ -428,7 +556,7 @@ final class TabDragDropScenarioRunner {
                 }
                 let start = CGPoint(x: frame.midX, y: frame.midY)
                 let end = self.outsideVisibleWindowPoint(relativeTo: primaryWorkspaceId)
-                self.appDelegate.directDispatchTabDrag(
+                self.directDispatchTabDrag(
                     tabId: draggedTab.tabId,
                     from: start,
                     to: end,
@@ -445,12 +573,31 @@ final class TabDragDropScenarioRunner {
                         if visibleWindows.count >= 2 && workspaceCount >= 2 {
                             self.pass("scenario9: direct-dispatch drag-out creates a visible detached window")
                         } else {
-                            self.fail("scenario9: expected drag-out to create a visible detached window, got startedTab=\(String(describing: self.appDelegate.debugLastBeginObservedTabDragTabId)) startCount=\(self.appDelegate.debugObservedTabDragStartCount) outcome=\(self.appDelegate.lastTabDragOutcome) dragState=\(String(describing: self.tabManager.tabDragState)) workspaces=\(workspaceCount) visibleWindows=\(visibleWindows.count)")
+                            self.fail("scenario9: expected drag-out to create a visible detached window, got startedTab=\(String(describing: self.observer.lastBeginObservedTabDragTabId)) startCount=\(self.observer.observedDragStartCount) outcome=\(self.appDelegate.lastTabDragOutcome) dragState=\(String(describing: self.tabManager.tabDragState)) workspaces=\(workspaceCount) visibleWindows=\(visibleWindows.count)")
                         }
                         self.reportAndExit()
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Helpers
+
+    /// Dispatch a drag simulation directly to the registered view for tabId.
+    private func directDispatchTabDrag(
+        tabId: Int32,
+        from startScreen: CGPoint,
+        to endScreen: CGPoint,
+        steps: Int = 12,
+        completion: @escaping (Bool) -> Void
+    ) {
+        guard let view = viewRegistry.view(for: tabId), view.window != nil else {
+            completion(false)
+            return
+        }
+        view.simulateDragForTesting(observer: observer, from: startScreen, to: endScreen, steps: steps) {
+            completion(true)
         }
     }
 
@@ -497,15 +644,16 @@ final class TabDragDropScenarioRunner {
         CGPoint(x: -4096, y: -4096)
     }
 
+    /// Simulate a drag through AppDelegate's observed-drag path (no real views involved).
     private func simulateObservedTabDrag(
         from start: CGPoint,
         to end: CGPoint,
         steps: Int = 12,
         completion: @escaping () -> Void
     ) {
-        appDelegate.debugTabPointerDown(at: start)
+        handlePointerEvent(type: .leftMouseDown, point: start)
         guard steps >= 2 else {
-            appDelegate.debugTabPointerUp(at: end)
+            handlePointerEvent(type: .leftMouseUp, point: end)
             completion()
             return
         }
@@ -528,13 +676,31 @@ final class TabDragDropScenarioRunner {
         completion: @escaping () -> Void
     ) {
         guard index < points.count else {
-            appDelegate.debugTabPointerUp(at: end)
+            handlePointerEvent(type: .leftMouseUp, point: end)
             completion()
             return
         }
-        appDelegate.debugTabPointerDragged(to: points[index])
+        handlePointerEvent(type: .leftMouseDragged, point: points[index])
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
             self.runObservedDragPoints(points, end: end, index: index + 1, completion: completion)
+        }
+    }
+
+    /// Drive AppDelegate's observed-drag state machine with synthesised pointer events.
+    private func handlePointerEvent(type: NSEvent.EventType, point: CGPoint) {
+        switch type {
+        case .leftMouseDown:
+            if tabManager.tabDragState == nil,
+               let tabId = tabManager.tabId(at: point) {
+                appDelegate.beginObservedTabDrag(tabId: tabId, screenPoint: point)
+                observer.recordDragStart(tabId: tabId)
+            }
+        case .leftMouseDragged:
+            appDelegate.updateObservedTabDrag(screenPoint: point)
+        case .leftMouseUp:
+            appDelegate.completeObservedTabDrag(screenPoint: point)
+        default:
+            break
         }
     }
 
@@ -648,18 +814,6 @@ final class TabDragDropScenarioRunner {
         )
     }
 
-    private func panelTargetFrame(for workspaceId: Int32) -> CGRect {
-        guard let window = workspaceWindow(for: workspaceId) else {
-            return CGRect(x: 240, y: 240, width: 300, height: 220)
-        }
-        return CGRect(
-            x: window.frame.minX + 80,
-            y: window.frame.minY + 80,
-            width: max(window.frame.width - 160, 160),
-            height: max(window.frame.height - 160, 160)
-        )
-    }
-
     private func detachedWindowPoint(relativeTo workspaceId: Int32) -> CGPoint {
         guard let window = workspaceWindow(for: workspaceId) else {
             return CGPoint(x: 1400, y: 800)
@@ -678,19 +832,13 @@ final class TabDragDropScenarioRunner {
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
 
         let rightPoint = CGPoint(x: min(window.frame.maxX + 80, visible.maxX - 40), y: window.frame.midY)
-        if !window.frame.contains(rightPoint) {
-            return rightPoint
-        }
+        if !window.frame.contains(rightPoint) { return rightPoint }
 
         let leftPoint = CGPoint(x: max(window.frame.minX - 80, visible.minX + 40), y: window.frame.midY)
-        if !window.frame.contains(leftPoint) {
-            return leftPoint
-        }
+        if !window.frame.contains(leftPoint) { return leftPoint }
 
         let belowPoint = CGPoint(x: window.frame.midX, y: max(window.frame.minY - 80, visible.minY + 40))
-        if !window.frame.contains(belowPoint) {
-            return belowPoint
-        }
+        if !window.frame.contains(belowPoint) { return belowPoint }
 
         return CGPoint(x: visible.minX + 40, y: visible.minY + 40)
     }
@@ -754,5 +902,17 @@ final class TabDragDropScenarioRunner {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             self.waitForTabFrame(tabId: tabId, retries: retries - 1, completion: completion)
         }
+    }
+
+    private static func scenarioName() -> String? {
+        let arguments = CommandLine.arguments
+        if let exact = arguments.first(where: { $0.hasPrefix("--debug-scenario=") }) {
+            return String(exact.dropFirst("--debug-scenario=".count))
+        }
+        guard let index = arguments.firstIndex(of: "--debug-scenario"),
+              index + 1 < arguments.count else {
+            return nil
+        }
+        return arguments[index + 1]
     }
 }

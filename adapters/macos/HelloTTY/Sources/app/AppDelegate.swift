@@ -6,32 +6,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Observable
     /// Accessible from NSView subclasses where NSApp.delegate is obscured by SwiftUI's adapter.
     static weak var shared: AppDelegate?
 
-    private final class StrongTabInteractionViewBox {
-        let view: TabMouseInteractionView
-
-        init(view: TabMouseInteractionView) {
-            self.view = view
-        }
-    }
-
     let tabManager = TabManager()
+    /// Injected by test scenarios to observe drag events. No-op in production.
+    var tabDragEventObserver: TabDragEventObserver = NoOpTabDragEventObserver.shared
+    /// Injected by test scenarios that need direct view access. Nil in production.
+    var tabInteractionViewRegistry: TabInteractionViewRegistry?
+    private(set) var lastTabDragOutcome: TabDragDropOutcome = .none
     private var detachedWindows: [Int32: NSWindow] = [:]
     private var reusableDetachedWindows: [NSWindow] = []
     private var titlebarAccessories: [ObjectIdentifier: TitlebarAccessoryHostingController] = [:]
     private var localTabDragMonitor: Any?
     private var globalTabDragMonitor: Any?
     private var pendingTabPress: (tabId: Int32, startPoint: CGPoint)?
-    private(set) var lastTabDragOutcome: TabDragDropOutcome = .none
-    private(set) var debugTabDragScenarioEnabled = false
-    private(set) var debugLastBeginObservedTabDragTabId: Int32?
-    private(set) var debugObservedTabDragStartCount = 0
-    private(set) var debugTabMouseDownCount = 0
-    private(set) var debugTabMouseDraggedCount = 0
-    private(set) var debugTabMouseUpCount = 0
-    private(set) var debugTabPanBeganCount = 0
-    private(set) var debugTabPanChangedCount = 0
-    private(set) var debugTabPanEndedCount = 0
-    private var tabInteractionViews: [Int32: StrongTabInteractionViewBox] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
@@ -57,22 +43,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Observable
                 )
             }
 
-            let debugScenarioName = self.debugScenarioName()
-            if debugScenarioName == "tab-dnd" || debugScenarioName == "tab-drag-start" {
-                self.debugTabDragScenarioEnabled = true
-                let runner = TabDragDropScenarioRunner(
-                    appDelegate: self,
-                    tabManager: self.tabManager,
-                    mode: debugScenarioName == "tab-drag-start" ? .tabDragStartOnly : .full
-                )
+            // Test harness entry points — runners are responsible for their own argument parsing.
+            if let runner = TabDragDropScenarioRunner.makeIfRequested(appDelegate: self, tabManager: self.tabManager) {
                 runner.run()
                 return
             }
 
-            // Self-test mode: run automated UI tests and exit
             if CommandLine.arguments.contains("--self-test") {
-                let runner = SelfTestRunner(tabManager: self.tabManager)
-                runner.run()
+                SelfTestRunner(tabManager: self.tabManager).run()
             }
         }
     }
@@ -156,22 +134,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Observable
         stopObservingTabDrag()
     }
 
-    func debugTabPointerDown(at screenPoint: CGPoint) {
-        handleDebugTabPointerEvent(type: .leftMouseDown, point: screenPoint)
-    }
-
-    func debugTabPointerDragged(to screenPoint: CGPoint) {
-        handleDebugTabPointerEvent(type: .leftMouseDragged, point: screenPoint)
-    }
-
-    func debugTabPointerUp(at screenPoint: CGPoint) {
-        handleDebugTabPointerEvent(type: .leftMouseUp, point: screenPoint)
-    }
-
     func beginObservedTabDrag(tabId: Int32, screenPoint: CGPoint) {
         lastTabDragOutcome = .none
-        debugLastBeginObservedTabDragTabId = tabId
-        debugObservedTabDragStartCount += 1
         beginObservingTabDrag()
         tabManager.beginTabDrag(tabId: tabId)
         tabManager.updateTabDrag(screenPoint: screenPoint)
@@ -180,78 +144,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Observable
     func updateObservedTabDrag(screenPoint: CGPoint) {
         guard tabManager.tabDragState != nil else { return }
         tabManager.updateTabDrag(screenPoint: screenPoint)
-    }
-
-    func resetDebugTabDragSignals() {
-        debugLastBeginObservedTabDragTabId = nil
-        debugObservedTabDragStartCount = 0
-        debugTabMouseDownCount = 0
-        debugTabMouseDraggedCount = 0
-        debugTabMouseUpCount = 0
-        debugTabPanBeganCount = 0
-        debugTabPanChangedCount = 0
-        debugTabPanEndedCount = 0
-        lastTabDragOutcome = .none
-    }
-
-    func recordDebugTabMouseDown() {
-        debugTabMouseDownCount += 1
-    }
-
-    func recordDebugTabMouseDragged() {
-        debugTabMouseDraggedCount += 1
-    }
-
-    func recordDebugTabMouseUp() {
-        debugTabMouseUpCount += 1
-    }
-
-    func recordDebugTabPanBegan() {
-        debugTabPanBeganCount += 1
-    }
-
-    func recordDebugTabPanChanged() {
-        debugTabPanChangedCount += 1
-    }
-
-    func recordDebugTabPanEnded() {
-        debugTabPanEndedCount += 1
-    }
-
-    /// Simulate a drag gesture directly on the registered TabMouseInteractionView for the given tabId.
-    /// Delegates to TabMouseInteractionView.simulateDragForTesting, which drives applyDragPhase
-    /// directly — the same code path that the live NSPanGestureRecognizer uses.
-    func directDispatchTabDrag(
-        tabId: Int32,
-        from startScreen: CGPoint,
-        to endScreen: CGPoint,
-        steps: Int = 12,
-        completion: @escaping (Bool) -> Void
-    ) {
-        guard let view = tabInteractionView(for: tabId), view.window != nil else {
-            completion(false)
-            return
-        }
-        view.simulateDragForTesting(from: startScreen, to: endScreen, steps: steps) {
-            completion(true)
-        }
-    }
-
-    func registerTabInteractionView(_ view: TabMouseInteractionView, for tabId: Int32) {
-        tabInteractionViews[tabId] = StrongTabInteractionViewBox(view: view)
-    }
-
-    func unregisterTabInteractionView(for tabId: Int32, view: TabMouseInteractionView) {
-        guard tabInteractionViews[tabId]?.view === view else { return }
-        tabInteractionViews.removeValue(forKey: tabId)
-    }
-
-    func tabInteractionView(for tabId: Int32) -> TabMouseInteractionView? {
-        tabInteractionViews[tabId]?.view
-    }
-
-    func debugRegisteredTabInteractionViewIds() -> [Int32] {
-        Array(tabInteractionViews.keys)
     }
 
     func showDetachedWindow(for workspaceId: Int32, near screenPoint: CGPoint? = nil) {
@@ -338,18 +230,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Observable
         return Int32(String(raw.dropFirst("workspace-".count)))
     }
 
-    private func debugScenarioName() -> String? {
-        let arguments = CommandLine.arguments
-        if let exact = arguments.first(where: { $0.hasPrefix("--debug-scenario=") }) {
-            return String(exact.dropFirst("--debug-scenario=".count))
-        }
-        guard let index = arguments.firstIndex(of: "--debug-scenario"),
-              index + 1 < arguments.count else {
-            return nil
-        }
-        return arguments[index + 1]
-    }
-
     private func handleObservedTabDragEvent(_ event: NSEvent) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -375,34 +255,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Observable
             syncWorkspaceWindows()
         case .reordered, .attached, .merged:
             syncWorkspaceWindows()
-        }
-    }
-
-    private func handleDebugTabPointerEvent(type: NSEvent.EventType, point: CGPoint) {
-        switch type {
-        case .leftMouseDown:
-            if tabManager.tabDragState == nil,
-               let tabId = tabManager.tabId(at: point) {
-                pendingTabPress = (tabId, point)
-            } else {
-                pendingTabPress = nil
-            }
-        case .leftMouseDragged:
-            if tabManager.tabDragState != nil {
-                tabManager.updateTabDrag(screenPoint: point)
-            } else if let pending = pendingTabPress,
-                      hypot(point.x - pending.startPoint.x, point.y - pending.startPoint.y) >= 6 {
-                tabManager.beginTabDrag(tabId: pending.tabId)
-                tabManager.updateTabDrag(screenPoint: point)
-            }
-        case .leftMouseUp:
-            if tabManager.tabDragState != nil {
-                completeObservedTabDrag(screenPoint: point)
-            } else {
-                pendingTabPress = nil
-            }
-        default:
-            break
         }
     }
 
