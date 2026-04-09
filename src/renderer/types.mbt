@@ -1,31 +1,6 @@
-///|
-/// RGBA color for the renderer (0-255 per channel).
-pub struct RgbaColor {
-  r : Byte
-  g : Byte
-  b : Byte
-  a : Byte
-} derive(Show, Eq)
-
-///|
-pub fn RgbaColor::new(r : Byte, g : Byte, b : Byte, a : Byte) -> RgbaColor {
-  { r, g, b, a }
-}
-
-///|
-pub fn RgbaColor::from_rgb(r : Byte, g : Byte, b : Byte) -> RgbaColor {
-  { r, g, b, a: b'\xFF' }
-}
-
-///|
-pub fn RgbaColor::white() -> RgbaColor {
-  RgbaColor::from_rgb(b'\xFF', b'\xFF', b'\xFF')
-}
-
-///|
-pub fn RgbaColor::black() -> RgbaColor {
-  RgbaColor::from_rgb(b'\x00', b'\x00', b'\x00')
-}
+// RgbaColor is defined in src/theme/types.mbt — the single source of truth.
+// Use @theme.RgbaColor throughout the renderer.
+pub typealias @theme.RgbaColor as RgbaColor
 
 // GlyphKey and CachedGlyph are in src/font/types.mbt — used via @font.
 
@@ -42,10 +17,6 @@ pub(all) struct RendererConfig {
   dpi_scale : Float
   /// Initial texture atlas size (width and height in pixels).
   atlas_size : Int
-  /// Default foreground color.
-  default_fg : RgbaColor
-  /// Default background color.
-  default_bg : RgbaColor
 } derive(Show)
 
 ///|
@@ -56,8 +27,6 @@ pub fn RendererConfig::default() -> RendererConfig {
     font_size: 14,
     dpi_scale: 1.0,
     atlas_size: 1024,
-    default_fg: RgbaColor::white(),
-    default_bg: RgbaColor::black(),
   }
 }
 

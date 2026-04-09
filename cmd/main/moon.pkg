@@ -2,6 +2,7 @@ import {
   "trkbt10/hello_tty/src/app" @app,
   "trkbt10/hello_tty/src/platform" @platform,
   "trkbt10/hello_tty/src/renderer" @renderer,
+  "trkbt10/hello_tty/src/theme" @theme,
   "trkbt10/subprocess/ipc/socket" @socket,
   "moonbitlang/core/env" @env,
 }

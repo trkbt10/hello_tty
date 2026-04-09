@@ -44,7 +44,7 @@ struct TabMouseInteractionLayer: NSViewRepresentable {
     }
 }
 
-final class TabMouseInteractionView: NSView {
+final class TabMouseInteractionView: FrameReportingNSView {
     weak var coordinator: TabMouseInteractionLayer.Coordinator?
     var tabId: Int32 = -1
 
@@ -141,11 +141,6 @@ final class TabMouseInteractionView: NSView {
         }
     }
 
-    override func layout() {
-        super.layout()
-        reportFrame()
-    }
-
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         let registry = AppDelegate.shared?.tabInteractionViewRegistry
@@ -164,23 +159,8 @@ final class TabMouseInteractionView: NSView {
         }
     }
 
-    override func setFrameSize(_ newSize: NSSize) {
-        super.setFrameSize(newSize)
-        reportFrame()
-    }
-
-    override func setFrameOrigin(_ newOrigin: NSPoint) {
-        super.setFrameOrigin(newOrigin)
-        reportFrame()
-    }
-
-    func reportFrame() {
+    override func reportFrame() {
         guard let coordinator else { return }
-        guard let window else {
-            coordinator.onFrameChange(nil)
-            return
-        }
-        let frame = window.convertToScreen(convert(bounds, to: nil))
-        coordinator.onFrameChange(frame)
+        coordinator.onFrameChange(screenFrame())
     }
 }

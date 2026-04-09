@@ -19,16 +19,11 @@ struct ScreenFrameReporter: NSViewRepresentable {
     }
 }
 
-final class ReportingView: NSView {
+final class ReportingView: FrameReportingNSView {
     var onFrameChange: ((CGRect?) -> Void)?
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
-    }
-
-    override func layout() {
-        super.layout()
-        reportFrame()
     }
 
     override func viewDidMoveToWindow() {
@@ -36,23 +31,8 @@ final class ReportingView: NSView {
         reportFrame()
     }
 
-    override func setFrameSize(_ newSize: NSSize) {
-        super.setFrameSize(newSize)
-        reportFrame()
-    }
-
-    override func setFrameOrigin(_ newOrigin: NSPoint) {
-        super.setFrameOrigin(newOrigin)
-        reportFrame()
-    }
-
-    func reportFrame() {
+    override func reportFrame() {
         guard let onFrameChange else { return }
-        guard let window else {
-            onFrameChange(nil)
-            return
-        }
-        let frame = window.convertToScreen(convert(bounds, to: nil))
-        onFrameChange(frame)
+        onFrameChange(screenFrame())
     }
 }

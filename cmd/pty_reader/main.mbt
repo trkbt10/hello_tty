@@ -20,8 +20,16 @@ fn main {
   }
   let socket_path = args[1]
   let shell = if args.length() >= 3 { args[2] } else { "/bin/zsh" }
-  let rows = if args.length() >= 4 { parse_int_or(args[3], 24) } else { 24 }
-  let cols = if args.length() >= 5 { parse_int_or(args[4], 80) } else { 80 }
+  let rows = if args.length() >= 4 {
+    @app.parse_int(args[3]).or(24)
+  } else {
+    24
+  }
+  let cols = if args.length() >= 5 {
+    @app.parse_int(args[4]).or(80)
+  } else {
+    80
+  }
   // Connect to the main process via IPC socket
   let conn = @socket.Connection::connect(socket_path) catch {
     _ => {
@@ -105,22 +113,3 @@ fn bytes_to_string(data : Bytes) -> String {
   buf.to_string()
 }
 
-///|
-fn parse_int_or(s : String, default_ : Int) -> Int {
-  let mut result = 0
-  let mut has_digit = false
-  for c in s {
-    let code = c.to_int()
-    if code >= 0x30 && code <= 0x39 {
-      result = result * 10 + (code - 0x30)
-      has_digit = true
-    } else {
-      return default_
-    }
-  }
-  if has_digit {
-    result
-  } else {
-    default_
-  }
-}

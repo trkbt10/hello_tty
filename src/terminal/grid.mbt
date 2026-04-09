@@ -254,20 +254,32 @@ pub fn Grid::resize(self : Grid, new_rows : Int, new_cols : Int) -> Unit {
 }
 
 ///|
-/// Insert n blank lines at the cursor row, scrolling lines below down.
-/// Lines that fall off the scroll_bottom are lost.
-pub fn Grid::insert_lines(self : Grid, at_row : Int, n : Int) -> Unit {
+/// Shift lines within the scroll region by n rows.
+///
+/// `insert` = true:  insert blank lines at `at_row`, pushing existing lines
+///                   down; lines that fall off scroll_bottom are lost.
+/// `insert` = false: remove lines at `at_row`, pulling lines below up;
+///                   blank lines appear at scroll_bottom.
+fn Grid::shift_lines(
+  self : Grid,
+  at_row : Int,
+  n : Int,
+  insert : Bool,
+) -> Unit {
   if at_row < self.scroll_top || at_row > self.scroll_bottom {
     return
   }
   let count = n.clamp(min=0, max=self.scroll_bottom - at_row + 1)
   for _i in 0..<count {
-    // Remove from bottom of scroll region
-    if self.scroll_bottom < self.lines.length() {
-      self.lines.remove(self.scroll_bottom) |> ignore
+    if insert {
+      if self.scroll_bottom < self.lines.length() {
+        self.lines.remove(self.scroll_bottom) |> ignore
+      }
+      self.lines.insert(at_row, Row::new(self.cols))
+    } else {
+      self.lines.remove(at_row) |> ignore
+      self.lines.insert(self.scroll_bottom, Row::new(self.cols))
     }
-    // Insert blank line at cursor row
-    self.lines.insert(at_row, Row::new(self.cols))
   }
   for i in at_row..<=self.scroll_bottom {
     self.lines[i].dirty = true
@@ -276,21 +288,40 @@ pub fn Grid::insert_lines(self : Grid, at_row : Int, n : Int) -> Unit {
 }
 
 ///|
+/// Insert n blank lines at the cursor row, scrolling lines below down.
+/// Lines that fall off the scroll_bottom are lost.
+pub fn Grid::insert_lines(self : Grid, at_row : Int, n : Int) -> Unit {
+  self.shift_lines(at_row, n, true)
+}
+
+///|
 /// Delete n lines at the cursor row, scrolling lines below up.
 /// Blank lines appear at the scroll_bottom.
 pub fn Grid::delete_lines(self : Grid, at_row : Int, n : Int) -> Unit {
-  if at_row < self.scroll_top || at_row > self.scroll_bottom {
-    return
+  self.shift_lines(at_row, n, false)
+}
+
+///|
+/// If the cell at `col` is a wide-char continuation (width=0), split it:
+/// reset the head at col-1 to a blank single-width cell, and optionally
+/// also reset the continuation cell itself (needed on insertion, where the
+/// continuation shifts away from its head).
+fn Grid::split_wide_at(
+  self : Grid,
+  line : Row,
+  col : Int,
+  also_reset_continuation~ : Bool,
+) -> Unit {
+  if col > 0 && line.cells[col].width == 0 {
+    let head = line.cells[col - 1]
+    if head.width == 2 {
+      head.char = ' '
+      head.width = 1
+    }
+    if also_reset_continuation {
+      line.cells[col].reset()
+    }
   }
-  let count = n.clamp(min=0, max=self.scroll_bottom - at_row + 1)
-  for _i in 0..<count {
-    self.lines.remove(at_row) |> ignore
-    self.lines.insert(self.scroll_bottom, Row::new(self.cols))
-  }
-  for i in at_row..<=self.scroll_bottom {
-    self.lines[i].dirty = true
-  }
-  self.mark_all_dirty()
 }
 
 ///|
@@ -307,18 +338,8 @@ pub fn Grid::insert_cells(self : Grid, row : Int, col : Int, n : Int) -> Unit {
   }
   // Before insertion: if the cell at `col` is a continuation (width=0),
   // its head at col-1 will be separated from its continuation — clean up both.
-  // The head loses its continuation, and the continuation itself (which will
-  // shift right) becomes orphaned.
-  if col > 0 && line.cells[col].width == 0 {
-    let head = line.cells[col - 1]
-    if head.width == 2 {
-      head.char = ' '
-      head.width = 1
-    }
-    // Also clean up the continuation cell itself — after the shift it will
-    // no longer be preceded by a valid head.
-    line.cells[col].reset()
-  }
+  // The continuation itself also shifts right and is no longer valid.
+  self.split_wide_at(line, col, also_reset_continuation=true)
   // Check if cells that will fall off the right edge include a wide char head
   // whose continuation would survive (or vice versa).
   // The cells that fall off are at positions [cols - count, cols).
@@ -364,13 +385,8 @@ pub fn Grid::delete_cells(self : Grid, row : Int, col : Int, n : Int) -> Unit {
   }
   // Before deletion: check if the cell at `col` is a continuation (width=0).
   // If so, its head at col-1 will lose its continuation — clean it up.
-  if col > 0 && line.cells[col].width == 0 {
-    let head = line.cells[col - 1]
-    if head.width == 2 {
-      head.char = ' '
-      head.width = 1
-    }
-  }
+  // The continuation itself is being deleted, so no need to reset it.
+  self.split_wide_at(line, col, also_reset_continuation=false)
   // Check if the last cell to be deleted (col + count - 1) is the head of a
   // wide character whose continuation (at col + count) would survive.
   // After the shift, that continuation becomes orphaned — clean it up.

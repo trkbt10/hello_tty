@@ -38,8 +38,23 @@ pub(all) struct RgbaColor {
 } derive(Show, Eq)
 
 ///|
+pub fn RgbaColor::new(r : Byte, g : Byte, b : Byte, a : Byte) -> RgbaColor {
+  { r, g, b, a }
+}
+
+///|
 pub fn RgbaColor::from_rgb(r : Byte, g : Byte, b : Byte) -> RgbaColor {
   { r, g, b, a: b'\xFF' }
+}
+
+///|
+pub fn RgbaColor::white() -> RgbaColor {
+  RgbaColor::from_rgb(b'\xFF', b'\xFF', b'\xFF')
+}
+
+///|
+pub fn RgbaColor::black() -> RgbaColor {
+  RgbaColor::from_rgb(b'\x00', b'\x00', b'\x00')
 }
 
 ///|

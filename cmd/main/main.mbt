@@ -184,7 +184,7 @@ fn run_event_loop(
     }
     // 3. Render
     if gpu_ok {
-      let commands = app.render()
+      let commands = app.render(@theme.Theme::midnight())
       gpu.execute_frame(commands) catch {
         _ => () // Swapchain error — will recover
       }
@@ -199,7 +199,7 @@ fn run_event_loop(
 fn run_headless(app : @app.App) -> Unit {
   let sample = "\u001b[31mHello\u001b[0m, \u001b[1;32mTerminal\u001b[0m!\r\n"
   app.process_pty_output(sample)
-  let commands = app.render()
+  let commands = app.render(@theme.Theme::midnight())
   println("Render commands: " + commands.length().to_string())
   let terminal = app.get_terminal()
   let grid = terminal.get_grid()

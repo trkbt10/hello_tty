@@ -86,19 +86,7 @@ pub fn ffi_switch_session(id_bytes : Bytes) -> Int {
 ///|
 /// List all sessions as JSON: [{"id":1,"title":"zsh","active":true}, ...]
 pub fn ffi_list_sessions() -> Bytes {
-  let sessions = bridge_state.sessions.list_sessions()
-  let arr : Array[Json] = []
-  for item in sessions {
-    let (id, title, active) = item
-    let m : Map[String, Json] = {
-      "id": id.to_json(),
-      "title": title.to_json(),
-      "active": active.to_json(),
-    }
-    arr.push(m.to_json())
-  }
-  result_buf.result_bytes = @utf8.encode(arr.to_json().stringify())
-  result_buf.result_bytes
+  serialize_id_title_active_list(bridge_state.sessions.list_sessions())
 }
 
 ///|
@@ -218,24 +206,7 @@ pub fn ffi_get_cursor() -> Bytes {
 /// system used by ffi_get_cursor and pixelToGrid.
 pub fn ffi_get_input_region() -> Bytes {
   match bridge_state.sessions.active_session() {
-    Some(session) => {
-      let terminal = session.get_terminal()
-      match terminal.get_input_region() {
-        Some((sr, sc, er, ec)) => {
-          let sb = StringBuilder::new(size_hint=32)
-          sb.write_string(sr.to_string())
-          sb.write_char(',')
-          sb.write_string(sc.to_string())
-          sb.write_char(',')
-          sb.write_string(er.to_string())
-          sb.write_char(',')
-          sb.write_string(ec.to_string())
-          result_buf.result_bytes = @utf8.encode(sb.to_string())
-          result_buf.result_bytes
-        }
-        None => Bytes::new(0)
-      }
-    }
+    Some(session) => serialize_input_region(session.get_terminal())
     None => Bytes::new(0)
   }
 }
@@ -245,23 +216,26 @@ pub fn ffi_get_input_region() -> Bytes {
 pub fn ffi_get_input_region_for(session_id_bytes : Bytes) -> Bytes {
   let session_id = bytes_to_int(session_id_bytes, -1)
   match bridge_state.sessions.get_session(session_id) {
-    Some(session) => {
-      let terminal = session.get_terminal()
-      match terminal.get_input_region() {
-        Some((sr, sc, er, ec)) => {
-          let sb = StringBuilder::new(size_hint=32)
-          sb.write_string(sr.to_string())
-          sb.write_char(',')
-          sb.write_string(sc.to_string())
-          sb.write_char(',')
-          sb.write_string(er.to_string())
-          sb.write_char(',')
-          sb.write_string(ec.to_string())
-          result_buf.result_bytes = @utf8.encode(sb.to_string())
-          result_buf.result_bytes
-        }
-        None => Bytes::new(0)
-      }
+    Some(session) => serialize_input_region(session.get_terminal())
+    None => Bytes::new(0)
+  }
+}
+
+///|
+/// Serialize a terminal's input region as "sr,sc,er,ec" bytes, or empty.
+fn serialize_input_region(terminal : @terminal.Terminal) -> Bytes {
+  match terminal.get_input_region() {
+    Some((sr, sc, er, ec)) => {
+      let sb = StringBuilder::new(size_hint=32)
+      sb.write_string(sr.to_string())
+      sb.write_char(',')
+      sb.write_string(sc.to_string())
+      sb.write_char(',')
+      sb.write_string(er.to_string())
+      sb.write_char(',')
+      sb.write_string(ec.to_string())
+      result_buf.result_bytes = @utf8.encode(sb.to_string())
+      result_buf.result_bytes
     }
     None => Bytes::new(0)
   }
@@ -583,7 +557,6 @@ fn ensure_gpu_initialized() -> Unit {
   if bridge_state.renderer is Some(_) {
     return
   }
-  let theme = bridge_state.theme
   let font_config : @font.FontConfig = {
     font_name: "Menlo",
     font_size: 26,
@@ -610,8 +583,6 @@ fn ensure_gpu_initialized() -> Unit {
     font_size: 26,
     dpi_scale: 2.0,
     atlas_size: 1024,
-    default_fg: renderer_color(theme.fg),
-    default_bg: renderer_bg_color(theme.bg, theme.bg_alpha),
   }
   bridge_state.renderer = Some(@renderer.Renderer::new(config=render_config))
   bridge_state.gpu_backend = Some(gpu)
@@ -766,7 +737,7 @@ pub fn ffi_render_frame() -> Int {
       bridge_state.gpu_backend,
     ) {
     (Some(session), Some(renderer), Some(gpu)) => {
-      let commands = renderer.render(session.get_terminal())
+      let commands = renderer.render(session.get_terminal(), bridge_state.theme)
       try {
         gpu.execute_frame(commands)
         0
@@ -794,7 +765,7 @@ pub fn ffi_render_frame_for(session_id_bytes : Bytes) -> Int {
     ) {
     (Some(session), Some(renderer), Some(gpu)) => {
       let terminal = session.get_terminal()
-      let commands = renderer.render(terminal)
+      let commands = renderer.render(terminal, bridge_state.theme)
       try {
         gpu.execute_frame_on(surface_id, commands)
         0
@@ -889,19 +860,7 @@ pub fn ffi_prev_tab() -> Int {
 ///|
 /// List all tabs as JSON: [{"id":N, "title":"...", "active":true}, ...]
 pub fn ffi_list_tabs() -> Bytes {
-  let tabs = bridge_state.layout.list_tabs()
-  let arr : Array[Json] = []
-  for item in tabs {
-    let (id, title, active) = item
-    let m : Map[String, Json] = {
-      "id": id.to_json(),
-      "title": title.to_json(),
-      "active": active.to_json(),
-    }
-    arr.push(m.to_json())
-  }
-  result_buf.result_bytes = @utf8.encode(arr.to_json().stringify())
-  result_buf.result_bytes
+  serialize_id_title_active_list(bridge_state.layout.list_tabs())
 }
 
 ///|
@@ -1145,20 +1104,7 @@ fn layout_node_to_json(node : @layout.LayoutNode) -> Json {
 /// Get all panels in the active tab as JSON.
 /// Returns: [{"panel_id":N, "session_id":N, "rows":N, "cols":N, "focused":bool}, ...]
 pub fn ffi_get_all_panels() -> Bytes {
-  let panels = bridge_state.layout.get_all_panels()
-  let arr : Array[Json] = []
-  for p in panels {
-    let m : Map[String, Json] = {
-      "panel_id": p.panel_id.to_json(),
-      "session_id": p.session_id.to_json(),
-      "rows": p.rows.to_json(),
-      "cols": p.cols.to_json(),
-      "focused": p.focused.to_json(),
-    }
-    arr.push(m.to_json())
-  }
-  result_buf.result_bytes = @utf8.encode(arr.to_json().stringify())
-  result_buf.result_bytes
+  panels_to_json()
 }
 
 ///|
@@ -1235,8 +1181,29 @@ fn get_cell_size_logical_f() -> (Float, Float) {
 }
 
 ///|
+/// Serialize an array of (id, title, active) tuples as JSON.
+/// Shared by ffi_list_sessions and ffi_list_tabs.
+fn serialize_id_title_active_list(
+  items : Array[(Int, String, Bool)],
+) -> Bytes {
+  let arr : Array[Json] = []
+  for item in items {
+    let (id, title, active) = item
+    let m : Map[String, Json] = {
+      "id": id.to_json(),
+      "title": title.to_json(),
+      "active": active.to_json(),
+    }
+    arr.push(m.to_json())
+  }
+  result_buf.result_bytes = @utf8.encode(arr.to_json().stringify())
+  result_buf.result_bytes
+}
+
+///|
 /// Serialize all panels in the active tab as JSON.
-/// Shared by ffi_resize_layout, ffi_resize_layout_px, ffi_notify_panel_resize.
+/// Shared by ffi_get_all_panels, ffi_resize_layout, ffi_resize_layout_px,
+/// ffi_notify_panel_resize.
 fn panels_to_json() -> Bytes {
   let panels = bridge_state.layout.get_all_panels()
   let arr : Array[Json] = []
@@ -1246,6 +1213,7 @@ fn panels_to_json() -> Bytes {
       "session_id": p.session_id.to_json(),
       "rows": p.rows.to_json(),
       "cols": p.cols.to_json(),
+      "focused": p.focused.to_json(),
     }
     arr.push(m.to_json())
   }
@@ -1557,19 +1525,3 @@ fn rgba_to_json(color : @theme.RgbaColor) -> Json {
   [color.r.to_int(), color.g.to_int(), color.b.to_int(), color.a.to_int()].to_json()
 }
 
-///|
-/// Convert theme RgbaColor to renderer RgbaColor, preserving alpha.
-fn renderer_color(c : @theme.RgbaColor) -> @renderer.RgbaColor {
-  @renderer.RgbaColor::new(c.r, c.g, c.b, c.a)
-}
-
-///|
-/// Convert theme RgbaColor to renderer RgbaColor with bg_alpha applied.
-fn renderer_bg_color(
-  c : @theme.RgbaColor,
-  alpha : Float,
-) -> @renderer.RgbaColor {
-  let a = (alpha * 255.0).to_int()
-  let clamped = if a < 0 { 0 } else if a > 255 { 255 } else { a }
-  @renderer.RgbaColor::new(c.r, c.g, c.b, clamped.to_byte())
-}

@@ -64,7 +64,7 @@ pub fn App::handle_platform_event(
   match event {
     None => ""
     KeyPress(key_code~, modifiers~) => {
-      let shift = modifiers.land(@platform.mod_shift) != 0
+      let shift = modifiers.land(@input.mod_shift) != 0
       // Shift+PageUp / Shift+PageDown: scroll viewport (not sent to PTY)
       if shift && key_code == 0xF72C {
         // Shift+PageUp — scroll back by half a screen
@@ -81,7 +81,7 @@ pub fn App::handle_platform_event(
         self.terminal.reset_viewport()
       }
       let modes = self.terminal.get_modes()
-      translate_key_input(key_code, modifiers, modes.cursor_keys_application)
+      @input.translate_key_input(key_code, modifiers, modes.cursor_keys_application)
     }
     Resize(width~, height~) => {
       let (rows, cols) = self.renderer.calculate_grid_size(width, height)
@@ -130,8 +130,11 @@ pub fn App::handle_platform_event(
 
 ///|
 /// Produce render commands for the current frame.
-pub fn App::render(self : App) -> Array[@renderer.RenderCommand] {
-  self.renderer.render(self.terminal)
+pub fn App::render(
+  self : App,
+  theme : @theme.Theme,
+) -> Array[@renderer.RenderCommand] {
+  self.renderer.render(self.terminal, theme)
 }
 
 ///|

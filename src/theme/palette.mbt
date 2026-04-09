@@ -4,7 +4,7 @@
 /// Colors 8-15: bright colors
 /// Colors 16-231: 6x6x6 color cube
 /// Colors 232-255: grayscale ramp
-let palette_256 : Array[RgbaColor] = {
+pub let palette_256 : Array[RgbaColor] = {
   let p : Array[RgbaColor] = Array::new(capacity=256)
   // Standard colors (0-7) — xterm defaults
   p.push(RgbaColor::from_rgb(b'\x00', b'\x00', b'\x00')) // Black

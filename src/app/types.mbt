@@ -110,8 +110,8 @@ pub fn IpcMessage::deserialize(s : String) -> IpcMessage? {
 }
 
 ///|
-/// Simple integer parser.
-fn parse_int(s : String) -> Int? {
+/// Simple non-negative integer parser. Returns None on non-digit characters.
+pub fn parse_int(s : String) -> Int? {
   let mut result = 0
   let mut has_digit = false
   for c in s {

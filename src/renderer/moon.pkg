@@ -1,6 +1,7 @@
 import {
   "trkbt10/hello_tty/src/terminal" @terminal,
   "trkbt10/hello_tty/src/font" @font,
+  "trkbt10/hello_tty/src/theme" @theme,
   "trkbt10/hello_tty/src/renderer/ffi" @ffi,
 }
 

@@ -654,18 +654,21 @@ class MoonBitBridge {
         let isActive: Bool
     }
 
-    /// List all sessions.
-    func listSessions() -> [SessionInfo] {
-        guard let fn = fnListSessions else { return [] }
-        guard let ptr = fn() else { return [] }
+    /// Parse a JSON array of `{id, title, active}` objects from a C string pointer.
+    /// Frees the pointer via `fnFreeString` before returning.
+    private func parseIdTitleActiveList(_ ptr: UnsafeMutablePointer<CChar>) -> [[String: Any]] {
         defer { fnFreeString?(ptr) }
         let jsonStr = String(cString: ptr)
-
         guard let data = jsonStr.data(using: .utf8),
               let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
         else { return [] }
+        return arr
+    }
 
-        return arr.compactMap { obj in
+    /// List all sessions.
+    func listSessions() -> [SessionInfo] {
+        guard let fn = fnListSessions, let ptr = fn() else { return [] }
+        return parseIdTitleActiveList(ptr).compactMap { obj in
             guard let id = obj["id"] as? Int,
                   let title = obj["title"] as? String,
                   let active = obj["active"] as? Bool
@@ -741,6 +744,9 @@ class MoonBitBridge {
         let isActive: Bool
     }
 
+    // TabInfo and SessionInfo have identical fields — listTabs() uses
+    // parseIdTitleActiveList(), the same helper as listSessions().
+
     struct WorkspaceTabInfo {
         let tabId: Int32
         let title: String
@@ -758,16 +764,8 @@ class MoonBitBridge {
 
     /// List all tabs.
     func listTabs() -> [TabInfo] {
-        guard let fn = fnListTabs else { return [] }
-        guard let ptr = fn() else { return [] }
-        defer { fnFreeString?(ptr) }
-        let jsonStr = String(cString: ptr)
-
-        guard let data = jsonStr.data(using: .utf8),
-              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
-        else { return [] }
-
-        return arr.compactMap { obj in
+        guard let fn = fnListTabs, let ptr = fn() else { return [] }
+        return parseIdTitleActiveList(ptr).compactMap { obj in
             guard let id = obj["id"] as? Int,
                   let title = obj["title"] as? String,
                   let active = obj["active"] as? Bool
@@ -1008,20 +1006,29 @@ class MoonBitBridge {
 
     // MARK: - Viewport / Scrollback
 
-    /// Scroll a session's viewport up (back into history). Returns new offset.
-    func scrollViewportUp(sessionId: Int32, lines: Int) -> Int32 {
-        guard let fn = fnScrollViewportUp else { return -1 }
+    enum ScrollDirection { case up, down }
+
+    /// Scroll a session's viewport. Returns new offset.
+    func scrollViewport(sessionId: Int32, lines: Int, direction: ScrollDirection) -> Int32 {
+        let fn: ScrollViewportFn?
+        switch direction {
+        case .up:   fn = fnScrollViewportUp
+        case .down: fn = fnScrollViewportDown
+        }
+        guard let fn else { return -1 }
         return "\(sessionId)".withCString { s in
             "\(lines)".withCString { l in fn(s, l) }
         }
     }
 
+    /// Scroll a session's viewport up (back into history). Returns new offset.
+    func scrollViewportUp(sessionId: Int32, lines: Int) -> Int32 {
+        scrollViewport(sessionId: sessionId, lines: lines, direction: .up)
+    }
+
     /// Scroll a session's viewport down (toward live). Returns new offset.
     func scrollViewportDown(sessionId: Int32, lines: Int) -> Int32 {
-        guard let fn = fnScrollViewportDown else { return -1 }
-        return "\(sessionId)".withCString { s in
-            "\(lines)".withCString { l in fn(s, l) }
-        }
+        scrollViewport(sessionId: sessionId, lines: lines, direction: .down)
     }
 
     /// Reset a session's viewport to live view.
