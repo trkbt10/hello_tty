@@ -132,6 +132,13 @@ pub fn Grid::set_cell(Self, Int, Int, Char, Cell) -> Unit
 pub fn Grid::set_cell_with_width(Self, Int, Int, Char, Cell, Int) -> Unit
 pub fn Grid::set_scroll_region(Self, Int, Int) -> Unit
 
+pub(all) enum PromptState {
+  Inactive
+  PromptDrawing
+  CommandInput
+  CommandOutput
+} derive(Eq, Show)
+
 pub struct Row {
   cells : Array[Cell]
   mut dirty : Bool
@@ -182,6 +189,15 @@ pub fn Scrollback::push_rows(Self, Array[Row]) -> Unit
 
 type ScrollbackPage
 
+pub struct SemanticPrompt {
+  mut state : PromptState
+  mut prompt_start_row : Int
+  mut command_start_row : Int
+  mut command_start_col : Int
+  mut last_exit_code : Int
+} derive(Show)
+pub fn SemanticPrompt::new() -> Self
+
 pub struct TermModes {
   mut cursor_keys_application : Bool
   ansi_mode : Bool
@@ -210,22 +226,37 @@ pub struct Terminal {
   mut rows : Int
   mut cols : Int
   mut viewport_offset : Int
+  features : TerminalFeatures
+  semantic_prompt : SemanticPrompt
+  reply_buf : StringBuilder
 }
+pub fn Terminal::cursor_move_sequence(Self, Int, Int) -> String
+pub fn Terminal::drain_replies(Self) -> String
 pub fn Terminal::get_cursor(Self) -> Cursor
+pub fn Terminal::get_features(Self) -> TerminalFeatures
 pub fn Terminal::get_grid(Self) -> Grid
+pub fn Terminal::get_input_region(Self) -> (Int, Int, Int, Int)?
 pub fn Terminal::get_modes(Self) -> TermModes
 pub fn Terminal::get_scrollback(Self) -> Scrollback
+pub fn Terminal::get_semantic_prompt(Self) -> SemanticPrompt
 pub fn Terminal::get_title(Self) -> String
 pub fn Terminal::get_viewport_offset(Self) -> Int
 pub fn Terminal::get_viewport_row(Self, Int) -> Row?
 pub fn Terminal::handle_event(Self, @vt_parser.ParserEvent) -> Unit
 pub fn Terminal::handle_events(Self, Array[@vt_parser.ParserEvent]) -> Unit
+pub fn Terminal::is_in_input_region(Self, Int, Int) -> Bool
 pub fn Terminal::new(rows? : Int, cols? : Int, max_scrollback? : Int) -> Self
 pub fn Terminal::reset(Self) -> Unit
 pub fn Terminal::reset_viewport(Self) -> Unit
 pub fn Terminal::resize(Self, Int, Int) -> Unit
 pub fn Terminal::scroll_viewport_down(Self, Int) -> Unit
 pub fn Terminal::scroll_viewport_up(Self, Int) -> Unit
+pub fn Terminal::set_feature(Self, String, Bool) -> Unit
+
+pub struct TerminalFeatures {
+  mut shell_integration : Bool
+} derive(Show)
+pub fn TerminalFeatures::default() -> Self
 
 // Type aliases
 

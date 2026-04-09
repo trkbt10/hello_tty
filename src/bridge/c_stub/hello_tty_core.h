@@ -58,8 +58,9 @@ int32_t hello_tty_shutdown(void);
 
 // Feed raw PTY output into the active session's terminal parser.
 // data: raw bytes from the shell process.
-// Returns 0 on success, -1 on failure.
-int32_t hello_tty_process_output(const char *data);
+// Returns reply data to write back to the PTY (DSR responses, DA, etc.),
+// or empty string if none. Caller must free the returned string.
+char *hello_tty_process_output(const char *data);
 
 // Translate a key event into the escape sequence to send to the PTY.
 // key_code: virtual key code as decimal string.
@@ -189,6 +190,28 @@ int32_t hello_tty_prev_tab(void);
 // List all tabs as JSON: [{"id":N,"title":"...","active":bool}, ...]
 char *hello_tty_list_tabs(void);
 
+// Reorder a tab to the target index within the tab strip.
+int32_t hello_tty_reorder_tab(const char *tab_id, const char *target_index);
+
+// Activate a workspace/window by ID.
+int32_t hello_tty_activate_workspace(const char *workspace_id);
+
+// Detach a tab into a newly created workspace. Returns the new workspace id.
+int32_t hello_tty_detach_tab_to_new_workspace(const char *tab_id);
+
+// Attach a tab into a target workspace at the requested index.
+int32_t hello_tty_attach_tab_to_workspace(const char *tab_id,
+                                          const char *workspace_id,
+                                          const char *target_index);
+
+// Merge a tab into the active tab by splitting the target panel.
+int32_t hello_tty_merge_tab_into_panel(const char *tab_id,
+                                       const char *target_panel_id,
+                                       const char *direction);
+
+// Get all workspaces/windows and their ordered tabs as JSON.
+char *hello_tty_get_workspace_snapshot(void);
+
 // Split a panel. direction: "0"=vertical, "1"=horizontal.
 // Returns JSON: {"panel_id":N,"session_id":N,"fd":N,"existing_rows":N,"existing_cols":N}
 // Returns NULL if panel is too small to split.
@@ -218,7 +241,8 @@ int32_t hello_tty_get_focused_panel_id(void);
 // ---------- Session-Targeted Operations ----------
 
 // Feed PTY output into a specific session.
-int32_t hello_tty_process_output_for(const char *session_id, const char *data);
+// Returns reply data to write back to the PTY. Caller must free.
+char *hello_tty_process_output_for(const char *session_id, const char *data);
 
 // Get the grid of a specific session as JSON.
 char *hello_tty_get_grid_for(const char *session_id);

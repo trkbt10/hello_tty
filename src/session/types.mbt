@@ -1,9 +1,10 @@
 ///|
 /// A terminal session — owns Terminal + Parser + PTY as an independent unit.
 ///
-/// Each tab in the UI corresponds to one Session. The session owns its own
-/// terminal state, parser, title, and PTY file descriptor — fully independent
-/// of other sessions.
+/// In the panel-based layout model, each panel maps 1:1 to one Session.
+/// Tabs group one or more panels via the layout tree, but they do not own PTY
+/// state directly. The session owns its own terminal state, parser, title, and
+/// PTY file descriptor — fully independent of other sessions.
 ///
 /// PTY I/O threading is a platform responsibility (Swift DispatchQueue,
 /// GTK GLib main loop) because MoonBit's GC is not thread-safe. The session
@@ -77,10 +78,13 @@ pub fn Session::get_child_pid(self : Session) -> Int {
 
 ///|
 /// Feed raw PTY output into this session's parser and terminal.
-pub fn Session::process_output(self : Session, data : String) -> Unit {
+/// Returns any reply data that should be written back to the PTY
+/// (e.g., DSR cursor position reports, DA device attribute responses).
+pub fn Session::process_output(self : Session, data : String) -> String {
   let events = self.parser.feed_str(data)
   self.terminal.handle_events(events)
   self.title = self.terminal.get_title()
+  self.terminal.drain_replies()
 }
 
 ///|

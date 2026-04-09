@@ -6,11 +6,8 @@ import Combine
 ///
 /// Each panel maps 1:1 to a MoonBit Session (independent PTY, grid, parser).
 /// The panel owns a TerminalState which drives the PTY I/O loop.
-class TerminalPanel: Identifiable, ObservableObject {
-    let id = UUID()
-    /// MoonBit panel ID (from LayoutManager).
+final class TerminalPanel: Identifiable, ObservableObject {
     let panelId: Int32
-    /// MoonBit session ID (from SessionManager, via LayoutManager).
     let sessionId: Int32
     @Published var isFocused: Bool = false
     let state: TerminalState
@@ -20,22 +17,18 @@ class TerminalPanel: Identifiable, ObservableObject {
         self.sessionId = sessionId
         self.state = state
     }
+
+    var id: Int32 { panelId }
 }
 
 /// Represents a single terminal tab containing one or more panels.
 ///
 /// The layout tree (split structure) is managed by MoonBit LayoutManager.
 /// This is a thin Swift wrapper providing Combine/SwiftUI observability.
-class TerminalTab: Identifiable, ObservableObject {
-    let id = UUID()
-    /// MoonBit tab ID (from LayoutManager).
+final class TerminalTab: Identifiable, ObservableObject {
     let tabId: Int32
     @Published var title: String = "Terminal"
     @Published var isActive: Bool = true
-
-    /// All panels in this tab. The layout tree structure is queried
-    /// from MoonBit via ffi_get_layout() — this flat list is for
-    /// PTY I/O loop management and state lookup.
     @Published var panels: [TerminalPanel] = []
 
     private var titleSink: AnyCancellable?
@@ -44,31 +37,27 @@ class TerminalTab: Identifiable, ObservableObject {
         self.tabId = tabId
     }
 
-    /// Add a panel and observe its state's title changes.
+    var id: Int32 { tabId }
+
     func addPanel(_ panel: TerminalPanel) {
         panels.append(panel)
-        // Observe focused panel's title
         if panel.isFocused {
             observeTitle(of: panel)
         }
     }
 
-    /// Remove a panel by panelId.
     func removePanel(panelId: Int32) {
         panels.removeAll(where: { $0.panelId == panelId })
     }
 
-    /// Find a panel by panelId.
-    func panel(forPanelId pid: Int32) -> TerminalPanel? {
-        panels.first(where: { $0.panelId == pid })
+    func panel(forPanelId panelId: Int32) -> TerminalPanel? {
+        panels.first(where: { $0.panelId == panelId })
     }
 
-    /// Find a panel by sessionId.
-    func panel(forSessionId sid: Int32) -> TerminalPanel? {
-        panels.first(where: { $0.sessionId == sid })
+    func panel(forSessionId sessionId: Int32) -> TerminalPanel? {
+        panels.first(where: { $0.sessionId == sessionId })
     }
 
-    /// Update which panel is focused and observe its title.
     func setFocusedPanel(_ panelId: Int32) {
         for panel in panels {
             panel.isFocused = (panel.panelId == panelId)
@@ -82,7 +71,7 @@ class TerminalTab: Identifiable, ObservableObject {
         titleSink = panel.state.$title
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newTitle in
-                guard let self = self else { return }
+                guard let self else { return }
                 if !newTitle.isEmpty {
                     self.title = newTitle
                 }
@@ -93,170 +82,506 @@ class TerminalTab: Identifiable, ObservableObject {
         title.isEmpty ? "Terminal" : title
     }
 
-    /// Convenience: the focused panel's state (backward compatibility for code
-    /// that used the old single-state-per-tab model).
     var state: TerminalState? {
         panels.first(where: { $0.isFocused })?.state ?? panels.first?.state
     }
 }
 
-/// Manages the collection of terminal tabs and their panels.
+/// One native macOS window workspace containing an ordered tab strip.
+final class TerminalWorkspace: Identifiable, ObservableObject {
+    let workspaceId: Int32
+    @Published var orderedTabIds: [Int32] = []
+    @Published var selectedTabId: Int32?
+    @Published var isActive: Bool = false
+
+    init(workspaceId: Int32) {
+        self.workspaceId = workspaceId
+    }
+
+    var id: Int32 { workspaceId }
+}
+
+/// Shared coordinator between the root window and detached windows.
+final class WorkspaceWindowContext: ObservableObject, Identifiable {
+    let id = UUID()
+    @Published var workspaceId: Int32?
+    let isPrimary: Bool
+
+    init(workspaceId: Int32? = nil, isPrimary: Bool = false) {
+        self.workspaceId = workspaceId
+        self.isPrimary = isPrimary
+    }
+}
+
+enum TabDragHoverTarget: Equatable {
+    /// Cursor is over the tab bar of a workspace. The insertion index is resolved
+    /// dynamically from x position when needed — the UI does not compute it.
+    case tabBar(workspaceId: Int32)
+    /// Resolved insertion slot within a tab bar (computed from x position).
+    case tabInsertion(workspaceId: Int32, index: Int)
+    case workspaceContent(workspaceId: Int32)
+    case panel(workspaceId: Int32, panelId: Int32)
+}
+
+struct TabDragState: Equatable {
+    let tabId: Int32
+    let sourceWorkspaceId: Int32
+    var screenPoint: CGPoint
+    var hoverTarget: TabDragHoverTarget?
+}
+
+private struct RegisteredTabDropTarget {
+    let id: String
+    let target: TabDragHoverTarget
+    var frame: CGRect
+}
+
+enum TabDragDropOutcome: Equatable {
+    case none
+    case reordered(workspaceId: Int32)
+    case attached(workspaceId: Int32)
+    case merged(workspaceId: Int32, panelId: Int32)
+    case detached(newWorkspaceId: Int32)
+}
+
+/// Manages the collection of workspaces, tabs, and their panel runtimes.
 ///
-/// Session and layout lifecycle is FULLY delegated to MoonBit:
-///   - LayoutManager owns the tab/panel layout tree
-///   - SessionManager owns the session (PTY, grid, parser)
+/// MoonBit owns the durable structure:
+///   - workspace membership
+///   - tab ordering
+///   - focused panel and layout tree
 ///
-/// This class handles:
-///   - SwiftUI observability (@Published)
-///   - PTY I/O loop per panel (platform threading concern)
-///   - Mapping MoonBit tab/panel IDs to Swift UI objects
-class TabManager: ObservableObject {
-    @Published var tabs: [TerminalTab] = []
-    @Published var selectedTabId: UUID?
+/// Swift owns only UI/runtime concerns:
+///   - SwiftUI observability
+///   - PTY I/O loop objects
+///   - NSView first-responder coordination
+final class TabManager: ObservableObject {
+    @Published private(set) var workspaces: [TerminalWorkspace] = []
+    @Published private(set) var activeWorkspaceId: Int32?
+    @Published private(set) var tabDragState: TabDragState?
 
     let bridge = MoonBitBridge.shared
     let theme: TerminalTheme
 
+    private var tabsById: [Int32: TerminalTab] = [:]
+    private var workspaceSizes: [Int32: CGSize] = [:]
+    private var dropTargets: [String: RegisteredTabDropTarget] = [:]
+    private var tabFrames: [Int32: CGRect] = [:]
+    /// tabBarFrames[workspaceId] = screen frame of the entire tab bar strip.
+    private var tabBarFrames: [Int32: CGRect] = [:]
+    private(set) var primaryWindowContext = WorkspaceWindowContext(isPrimary: true)
+
     init() {
         self.theme = TerminalTheme.fromBridge(MoonBitBridge.shared)
+        _ = syncWorkspacesFromBridge()
     }
 
-    var selectedTab: TerminalTab? {
-        guard let id = selectedTabId else { return tabs.first }
-        return tabs.first(where: { $0.id == id })
+    var tabs: [TerminalTab] { tabs(in: activeWorkspaceId) }
+    var selectedTabId: Int32? { workspace(for: activeWorkspaceId)?.selectedTabId }
+    var selectedTab: TerminalTab? { selectedTab(in: activeWorkspaceId) }
+    var focusedPanel: TerminalPanel? { focusedPanel(in: activeWorkspaceId) }
+
+    func workspace(for workspaceId: Int32?) -> TerminalWorkspace? {
+        guard let workspaceId else { return nil }
+        return workspaces.first(where: { $0.workspaceId == workspaceId })
     }
 
-    /// The currently focused panel across all tabs.
-    var focusedPanel: TerminalPanel? {
-        selectedTab?.panels.first(where: { $0.isFocused })
+    func tab(for tabId: Int32) -> TerminalTab? {
+        tabsById[tabId]
     }
 
-    // MARK: - Tab Operations
+    func workspaceId(forTabId tabId: Int32) -> Int32? {
+        workspaces.first(where: { $0.orderedTabIds.contains(tabId) })?.workspaceId
+    }
 
-    /// Create a new tab with a single panel.
-    /// MoonBit LayoutManager handles: session creation, PTY spawn, layout tree.
+    func registerDropTarget(id: String, target: TabDragHoverTarget, frame: CGRect) {
+        dropTargets[id] = RegisteredTabDropTarget(id: id, target: target, frame: frame)
+        if let dragState = tabDragState {
+            updateTabDrag(screenPoint: dragState.screenPoint)
+        }
+    }
+
+    func unregisterDropTarget(id: String) {
+        dropTargets.removeValue(forKey: id)
+        if let dragState = tabDragState {
+            updateTabDrag(screenPoint: dragState.screenPoint)
+        }
+    }
+
+    func registerTabFrame(tabId: Int32, frame: CGRect) {
+        tabFrames[tabId] = frame
+    }
+
+    func unregisterTabFrame(tabId: Int32) {
+        tabFrames.removeValue(forKey: tabId)
+    }
+
+    func frameForTab(tabId: Int32) -> CGRect? {
+        tabFrames[tabId]
+    }
+
+    func registerTabBarFrame(workspaceId: Int32, frame: CGRect) {
+        tabBarFrames[workspaceId] = frame
+        // Recompute hover in case a drag is in progress.
+        if let dragState = tabDragState {
+            updateTabDrag(screenPoint: dragState.screenPoint)
+        }
+    }
+
+    func unregisterTabBarFrame(workspaceId: Int32) {
+        tabBarFrames.removeValue(forKey: workspaceId)
+    }
+
+    /// Given a screen x coordinate within a workspace's tab bar, return the insertion
+    /// index that cursor position maps to. Tabs are sorted left-to-right by their
+    /// registered frame; the cursor x splits each tab at its midpoint.
+    func tabInsertionIndex(workspaceId: Int32, screenX: CGFloat) -> Int {
+        let orderedTabIds = workspace(for: workspaceId)?.orderedTabIds ?? []
+        let framesInOrder: [(tabId: Int32, minX: CGFloat)] = orderedTabIds.compactMap { tabId in
+            guard let frame = tabFrames[tabId] else { return nil }
+            return (tabId, frame.minX)
+        }.sorted { $0.minX < $1.minX }
+
+        for (offset, entry) in framesInOrder.enumerated() {
+            guard let frame = tabFrames[entry.tabId] else { continue }
+            if screenX < frame.midX {
+                return offset
+            }
+        }
+        return framesInOrder.count
+    }
+
+    func frameForDropTarget(_ target: TabDragHoverTarget) -> CGRect? {
+        switch target {
+        case .tabBar(let workspaceId):
+            return tabBarFrames[workspaceId]
+        case .tabInsertion(let workspaceId, _):
+            // tabInsertion is now resolved dynamically from the tab bar frame.
+            // Return the tab bar frame so callers can find a valid drop destination.
+            return tabBarFrames[workspaceId]
+        default:
+            return dropTargets.values.first(where: { $0.target == target })?.frame
+        }
+    }
+
+    func tabId(at screenPoint: CGPoint) -> Int32? {
+        let candidates = tabFrames.filter { $0.value.contains(screenPoint) }
+        guard !candidates.isEmpty else { return nil }
+        return candidates.min { lhs, rhs in
+            (lhs.value.width * lhs.value.height) < (rhs.value.width * rhs.value.height)
+        }?.key
+    }
+
+    func beginTabDrag(tabId: Int32) {
+        guard let sourceWorkspaceId = workspaceId(forTabId: tabId) else { return }
+        tabDragState = TabDragState(
+            tabId: tabId,
+            sourceWorkspaceId: sourceWorkspaceId,
+            screenPoint: NSEvent.mouseLocation,
+            hoverTarget: nil
+        )
+        updateTabDrag(screenPoint: NSEvent.mouseLocation)
+    }
+
+    func updateTabDrag(screenPoint: CGPoint) {
+        guard var dragState = tabDragState else { return }
+        dragState.screenPoint = screenPoint
+        dragState.hoverTarget = hoveredTarget(at: screenPoint)
+        tabDragState = dragState
+    }
+
+    func cancelTabDrag() {
+        tabDragState = nil
+    }
+
+    func finishTabDrag(screenPoint: CGPoint) -> TabDragDropOutcome {
+        guard let dragState = tabDragState else { return .none }
+        updateTabDrag(screenPoint: screenPoint)
+        let resolvedState = tabDragState ?? dragState
+        defer { tabDragState = nil }
+
+        switch resolvedState.hoverTarget {
+        case .tabBar(let workspaceId):
+            let index = tabInsertionIndex(workspaceId: workspaceId, screenX: resolvedState.screenPoint.x)
+            let sourceWorkspaceId = resolvedState.sourceWorkspaceId
+            if sourceWorkspaceId == workspaceId {
+                reorderTab(tabId: resolvedState.tabId, in: workspaceId, to: index)
+                return .reordered(workspaceId: workspaceId)
+            }
+            attachTab(tabId: resolvedState.tabId, to: workspaceId, targetIndex: index)
+            return .attached(workspaceId: workspaceId)
+
+        case .tabInsertion(let workspaceId, let index):
+            let sourceWorkspaceId = resolvedState.sourceWorkspaceId
+            if sourceWorkspaceId == workspaceId {
+                reorderTab(tabId: resolvedState.tabId, in: workspaceId, to: index)
+                return .reordered(workspaceId: workspaceId)
+            }
+            attachTab(tabId: resolvedState.tabId, to: workspaceId, targetIndex: index)
+            return .attached(workspaceId: workspaceId)
+
+        case .panel(let workspaceId, let panelId):
+            if dropTabOnPanel(
+                tabId: resolvedState.tabId,
+                to: workspaceId,
+                targetPanelId: panelId
+            ) {
+                return .merged(workspaceId: workspaceId, panelId: panelId)
+            }
+            return .none
+
+        case .workspaceContent(let workspaceId):
+            guard let targetPanelId = focusedPanel(in: workspaceId)?.panelId
+                ?? selectedTab(in: workspaceId)?.panels.first?.panelId
+            else {
+                return .none
+            }
+            if dropTabOnPanel(
+                tabId: resolvedState.tabId,
+                to: workspaceId,
+                targetPanelId: targetPanelId
+            ) {
+                return .merged(workspaceId: workspaceId, panelId: targetPanelId)
+            }
+            return .none
+
+        case .none:
+            if shouldDetachDraggedTabOutsideWindows(resolvedState),
+               let newWorkspaceId = detachTabToNewWindow(tabId: resolvedState.tabId) {
+                return .detached(newWorkspaceId: newWorkspaceId)
+            }
+            return .none
+        }
+    }
+
+    func isTabBeingDragged(_ tabId: Int32) -> Bool {
+        tabDragState?.tabId == tabId
+    }
+
+    func isHoveringTabInsertion(workspaceId: Int32?, index: Int) -> Bool {
+        guard let workspaceId, let dragState = tabDragState else { return false }
+        switch dragState.hoverTarget {
+        case .tabInsertion(let wid, let idx):
+            return wid == workspaceId && idx == index
+        case .tabBar(let wid) where wid == workspaceId:
+            return tabInsertionIndex(workspaceId: workspaceId, screenX: dragState.screenPoint.x) == index
+        default:
+            return false
+        }
+    }
+
+    func isHoveringPanel(workspaceId: Int32, panelId: Int32) -> Bool {
+        let hoverTarget = tabDragState?.hoverTarget
+        if hoverTarget == .panel(workspaceId: workspaceId, panelId: panelId) {
+            return true
+        }
+        if hoverTarget == .workspaceContent(workspaceId: workspaceId) {
+            return focusedPanel(in: workspaceId)?.panelId == panelId
+                || selectedTab(in: workspaceId)?.panels.first?.panelId == panelId
+        }
+        return false
+    }
+
+    func tabs(in workspaceId: Int32?) -> [TerminalTab] {
+        guard let workspace = workspace(for: workspaceId) else { return [] }
+        return workspace.orderedTabIds.compactMap { tabsById[$0] }
+    }
+
+    func selectedTab(in workspaceId: Int32?) -> TerminalTab? {
+        guard let workspace = workspace(for: workspaceId) else { return nil }
+        let tabId = workspace.selectedTabId ?? workspace.orderedTabIds.first
+        guard let tabId else { return nil }
+        return tabsById[tabId]
+    }
+
+    func focusedPanel(in workspaceId: Int32?) -> TerminalPanel? {
+        selectedTab(in: workspaceId)?.panels.first(where: { $0.isFocused })
+    }
+
     @discardableResult
-    func newTab(rows: Int = 24, cols: Int = 80) -> TerminalTab {
+    func newTab(in workspaceId: Int32? = nil, rows: Int = 24, cols: Int = 80) -> TerminalTab {
+        if let workspaceId {
+            _ = bridge.activateWorkspace(workspaceId: workspaceId)
+        }
         guard let result = bridge.createTab(rows: rows, cols: cols) else {
             NSLog("hello_tty: failed to create tab")
             let tab = TerminalTab(tabId: -1)
-            tabs.append(tab)
-            selectedTabId = tab.id
+            tabsById[tab.tabId] = tab
             return tab
         }
 
-        let tab = TerminalTab(tabId: result.tabId)
+        let tab = tabsById[result.tabId] ?? TerminalTab(tabId: result.tabId)
+        tabsById[result.tabId] = tab
         let state = TerminalState(theme: theme, sessionId: result.sessionId)
-        let panel = TerminalPanel(panelId: result.panelId,
-                                  sessionId: result.sessionId,
-                                  state: state)
+        let panel = TerminalPanel(
+            panelId: result.panelId,
+            sessionId: result.sessionId,
+            state: state
+        )
         panel.isFocused = true
         tab.addPanel(panel)
 
-        tabs.append(tab)
-        selectedTabId = tab.id
-
-        // Start PTY I/O loop
         if result.masterFd >= 0 {
             state.startPtyLoop(masterFd: result.masterFd)
         }
 
-        // Resize the new tab's layout to match the current window size
-        forceLayoutResize()
-
+        _ = syncWorkspacesFromBridge()
+        if let workspaceId = activeWorkspaceId {
+            forceLayoutResize(for: workspaceId)
+        }
         return tab
     }
 
-    func closeTab(_ tab: TerminalTab) {
-        // Stop all PTY loops in this tab
+    func closeTab(_ tab: TerminalTab, in workspaceId: Int32? = nil) {
+        activateWorkspaceIfNeeded(workspaceId)
         for panel in tab.panels {
             panel.state.stopPtyLoop()
         }
         bridge.closeTab(id: tab.tabId)
+        _ = syncWorkspacesFromBridge()
+    }
 
-        tabs.removeAll(where: { $0.id == tab.id })
-        if selectedTabId == tab.id {
-            selectedTabId = tabs.last?.id
-            if let newTab = tabs.last {
-                _ = bridge.switchTab(id: newTab.tabId)
-            }
+    func selectTab(_ tab: TerminalTab, in workspaceId: Int32? = nil) {
+        activateWorkspaceIfNeeded(workspaceId)
+        _ = bridge.switchTab(id: tab.tabId)
+        _ = syncWorkspacesFromBridge()
+        if let workspaceId = workspaceId ?? activeWorkspaceId {
+            forceLayoutResize(for: workspaceId)
         }
     }
 
-    func selectTab(_ tab: TerminalTab) {
-        selectedTabId = tab.id
-        _ = bridge.switchTab(id: tab.tabId)
-        forceLayoutResize()
+    func activateWorkspace(_ workspaceId: Int32) {
+        guard bridge.activateWorkspace(workspaceId: workspaceId) else { return }
+        _ = syncWorkspacesFromBridge()
+        forceLayoutResize(for: workspaceId)
     }
 
-    func nextTab() {
+    func nextTab(in workspaceId: Int32? = nil) {
+        activateWorkspaceIfNeeded(workspaceId)
         _ = bridge.nextTab()
-        syncSelectedTab()
-        forceLayoutResize()
+        _ = syncWorkspacesFromBridge()
+        if let workspaceId = workspaceId ?? activeWorkspaceId {
+            forceLayoutResize(for: workspaceId)
+        }
     }
 
-    func prevTab() {
+    func prevTab(in workspaceId: Int32? = nil) {
+        activateWorkspaceIfNeeded(workspaceId)
         _ = bridge.prevTab()
-        syncSelectedTab()
-        forceLayoutResize()
+        _ = syncWorkspacesFromBridge()
+        if let workspaceId = workspaceId ?? activeWorkspaceId {
+            forceLayoutResize(for: workspaceId)
+        }
     }
 
-    /// Force a layout resize using the last known total dimensions.
-    /// Called after tab switch to ensure the new tab's layout tree gets
-    /// proper dimensions and all PTYs are resized.
-    private func forceLayoutResize() {
-        guard lastTotalWidth > 0 && lastTotalHeight > 0 else { return }
-        let panelDims = bridge.resizeLayoutPx(
-            widthPx: Int(lastTotalWidth), heightPx: Int(lastTotalHeight))
-        _ = applyPanelDimensions(panelDims)
+    func reorderTab(tabId: Int32, in workspaceId: Int32, to targetIndex: Int) {
+        activateWorkspaceIfNeeded(workspaceId)
+        guard bridge.reorderTab(tabId: tabId, targetIndex: targetIndex) else { return }
+        _ = syncWorkspacesFromBridge()
     }
 
-    // MARK: - Panel Operations
+    @discardableResult
+    func detachTabToNewWorkspace(tabId: Int32) -> Int32 {
+        let workspaceId = bridge.detachTabToNewWorkspace(tabId: tabId)
+        _ = syncWorkspacesFromBridge()
+        return workspaceId
+    }
 
-    /// Split the focused panel. direction: 0=vertical (left/right), 1=horizontal (top/bottom).
-    func splitFocusedPanel(direction: Int32) {
-        guard let tab = selectedTab,
-              let focused = focusedPanel else { return }
+    func canDetachTabToNewWindow(tabId: Int32) -> Bool {
+        guard let workspaceId = workspaceId(forTabId: tabId) else { return false }
+        return tabs(in: workspaceId).count > 1
+    }
+
+    @discardableResult
+    func detachTabToNewWindow(tabId: Int32) -> Int32? {
+        guard canDetachTabToNewWindow(tabId: tabId) else { return nil }
+        let workspaceId = detachTabToNewWorkspace(tabId: tabId)
+        return workspaceId >= 0 ? workspaceId : nil
+    }
+
+    func attachTab(tabId: Int32, to workspaceId: Int32, targetIndex: Int) {
+        guard bridge.attachTabToWorkspace(
+            tabId: tabId,
+            workspaceId: workspaceId,
+            targetIndex: targetIndex
+        ) else { return }
+        _ = syncWorkspacesFromBridge()
+    }
+
+    func dropTabOnPanel(
+        tabId: Int32,
+        to workspaceId: Int32,
+        targetPanelId: Int32,
+        direction: Int32 = 0
+    ) -> Bool {
+        guard let sourceTab = tabsById[tabId] else { return false }
+        activateWorkspaceIfNeeded(workspaceId)
+        guard let targetTab = selectedTab(in: workspaceId),
+              targetTab.tabId != tabId else { return false }
+
+        let movedPanels = sourceTab.panels
+        let movedFocusedPanelId = movedPanels.first(where: { $0.isFocused })?.panelId ?? movedPanels.first?.panelId
+        guard bridge.mergeTabIntoPanel(
+            tabId: tabId,
+            targetPanelId: targetPanelId,
+            direction: direction
+        ) else { return false }
+
+        sourceTab.panels = []
+        for panel in movedPanels {
+            targetTab.addPanel(panel)
+        }
+        if let movedFocusedPanelId {
+            targetTab.setFocusedPanel(movedFocusedPanelId)
+        }
+
+        _ = syncWorkspacesFromBridge()
+        forceLayoutResize(for: workspaceId)
+        makeFocusedPanelFirstResponder(in: workspaceId)
+        return true
+    }
+
+    func splitFocusedPanel(in workspaceId: Int32, direction: Int32) {
+        activateWorkspaceIfNeeded(workspaceId)
+        guard let tab = selectedTab(in: workspaceId),
+              let focused = focusedPanel(in: workspaceId) else { return }
 
         guard let result = bridge.splitPanel(panelId: focused.panelId, direction: direction) else {
             NSLog("hello_tty: panel too small to split")
             return
         }
 
-        // Create state for the new panel
         let newState = TerminalState(theme: theme, sessionId: result.sessionId)
-        let newPanel = TerminalPanel(panelId: result.panelId,
-                                     sessionId: result.sessionId,
-                                     state: newState)
+        let newPanel = TerminalPanel(
+            panelId: result.panelId,
+            sessionId: result.sessionId,
+            state: newState
+        )
         tab.addPanel(newPanel)
 
-        // Start PTY I/O loop for the new panel
         if result.masterFd >= 0 {
             newState.startPtyLoop(masterFd: result.masterFd)
         }
 
-        // Update focus (MoonBit already moved focus to new panel)
         tab.setFocusedPanel(result.panelId)
-
-        // Resize all panels via MoonBit SoT. This propagates the split's
-        // effect on dimensions to all sessions and sends ptyResize (SIGWINCH).
-        forceLayoutResize()
-
+        forceLayoutResize(for: workspaceId)
         objectWillChange.send()
-
-        // Move keyboard focus to the new panel's view.
-        // Delayed because SwiftUI needs time to create the new TerminalView.
-        makeFocusedPanelFirstResponder()
+        makeFocusedPanelFirstResponder(in: workspaceId)
     }
 
-    /// Close the focused panel. If last panel in tab, closes the tab.
-    func closeFocusedPanel() {
-        guard let tab = selectedTab,
-              let focused = focusedPanel else { return }
+    func splitFocusedPanel(direction: Int32) {
+        if let activeWorkspaceId {
+            splitFocusedPanel(in: activeWorkspaceId, direction: direction)
+        }
+    }
 
-        // If this is the last panel, close the tab
+    func closeFocusedPanel(in workspaceId: Int32) {
+        activateWorkspaceIfNeeded(workspaceId)
+        guard let tab = selectedTab(in: workspaceId),
+              let focused = focusedPanel(in: workspaceId) else { return }
+
         if tab.panels.count <= 1 {
-            closeTab(tab)
+            closeTab(tab, in: workspaceId)
             return
         }
 
@@ -264,31 +589,39 @@ class TabManager: ObservableObject {
         let newFocusedSessionId = bridge.closePanel(panelId: focused.panelId)
         tab.removePanel(panelId: focused.panelId)
 
-        // Update focus
-        if newFocusedSessionId >= 0 {
-            if let newFocused = tab.panel(forSessionId: newFocusedSessionId) {
-                tab.setFocusedPanel(newFocused.panelId)
-            }
+        if newFocusedSessionId >= 0, let newFocused = tab.panel(forSessionId: newFocusedSessionId) {
+            tab.setFocusedPanel(newFocused.panelId)
         }
 
-        // Resize remaining panels to fill the freed space
-        forceLayoutResize()
+        forceLayoutResize(for: workspaceId)
         objectWillChange.send()
-        makeFocusedPanelFirstResponder()
+        makeFocusedPanelFirstResponder(in: workspaceId)
     }
 
-    /// Focus a panel by MoonBit panel ID.
-    func focusPanel(panelId: Int32) {
-        guard let tab = selectedTab else { return }
+    func closeFocusedPanel() {
+        if let activeWorkspaceId {
+            closeFocusedPanel(in: activeWorkspaceId)
+        }
+    }
+
+    func focusPanel(in workspaceId: Int32, panelId: Int32) {
+        activateWorkspaceIfNeeded(workspaceId)
+        guard let tab = selectedTab(in: workspaceId) else { return }
         if bridge.focusPanel(panelId: panelId) {
             tab.setFocusedPanel(panelId)
             objectWillChange.send()
         }
     }
 
-    /// Focus panel by DFS index (Cmd+1/2/3).
-    func focusPanelByIndex(_ index: Int) {
-        guard let tab = selectedTab else { return }
+    func focusPanel(panelId: Int32) {
+        if let activeWorkspaceId {
+            focusPanel(in: activeWorkspaceId, panelId: panelId)
+        }
+    }
+
+    func focusPanelByIndex(in workspaceId: Int32, _ index: Int) {
+        activateWorkspaceIfNeeded(workspaceId)
+        guard let tab = selectedTab(in: workspaceId) else { return }
         if bridge.focusPanelByIndex(Int32(index)) {
             let newFocusedId = bridge.getFocusedPanelId()
             if newFocusedId >= 0 {
@@ -298,53 +631,73 @@ class TabManager: ObservableObject {
         }
     }
 
-    /// Focus neighboring panel (Cmd+Alt+Arrow).
-    func focusDirection(_ direction: Int32) {
-        guard let tab = selectedTab else { return }
+    func focusPanelByIndex(_ index: Int) {
+        if let activeWorkspaceId {
+            focusPanelByIndex(in: activeWorkspaceId, index)
+        }
+    }
+
+    func focusDirection(in workspaceId: Int32, _ direction: Int32) {
+        activateWorkspaceIfNeeded(workspaceId)
+        guard let tab = selectedTab(in: workspaceId) else { return }
         if bridge.focusDirection(direction) {
             let newFocusedId = bridge.getFocusedPanelId()
             if newFocusedId >= 0 {
                 tab.setFocusedPanel(newFocusedId)
-                makeFocusedPanelFirstResponder()
+                makeFocusedPanelFirstResponder(in: workspaceId)
                 objectWillChange.send()
             }
         }
     }
 
-    /// Focus next split pane by creation order (Cmd+]).
-    func focusNextSplit() {
-        guard let tab = selectedTab else { return }
+    func focusDirection(_ direction: Int32) {
+        if let activeWorkspaceId {
+            focusDirection(in: activeWorkspaceId, direction)
+        }
+    }
+
+    func focusNextSplit(in workspaceId: Int32) {
+        activateWorkspaceIfNeeded(workspaceId)
+        guard let tab = selectedTab(in: workspaceId) else { return }
         let panels = tab.panels
         guard panels.count > 1,
-              let currentIdx = panels.firstIndex(where: { $0.isFocused })
-        else { return }
-        let nextIdx = (currentIdx + 1) % panels.count
-        let nextPanel = panels[nextIdx]
+              let currentIdx = panels.firstIndex(where: { $0.isFocused }) else { return }
+        let nextPanel = panels[(currentIdx + 1) % panels.count]
         if bridge.focusPanel(panelId: nextPanel.panelId) {
             tab.setFocusedPanel(nextPanel.panelId)
-            makeFocusedPanelFirstResponder()
+            makeFocusedPanelFirstResponder(in: workspaceId)
             objectWillChange.send()
         }
     }
 
-    /// Focus previous split pane by creation order (Cmd+[).
-    func focusPrevSplit() {
-        guard let tab = selectedTab else { return }
+    func focusNextSplit() {
+        if let activeWorkspaceId {
+            focusNextSplit(in: activeWorkspaceId)
+        }
+    }
+
+    func focusPrevSplit(in workspaceId: Int32) {
+        activateWorkspaceIfNeeded(workspaceId)
+        guard let tab = selectedTab(in: workspaceId) else { return }
         let panels = tab.panels
         guard panels.count > 1,
-              let currentIdx = panels.firstIndex(where: { $0.isFocused })
-        else { return }
-        let prevIdx = (currentIdx - 1 + panels.count) % panels.count
-        let prevPanel = panels[prevIdx]
+              let currentIdx = panels.firstIndex(where: { $0.isFocused }) else { return }
+        let prevPanel = panels[(currentIdx - 1 + panels.count) % panels.count]
         if bridge.focusPanel(panelId: prevPanel.panelId) {
             tab.setFocusedPanel(prevPanel.panelId)
-            makeFocusedPanelFirstResponder()
+            makeFocusedPanelFirstResponder(in: workspaceId)
             objectWillChange.send()
         }
     }
 
-    /// Go to tab by index (Cmd+1-8), or last tab (index = -1, Cmd+9).
-    func gotoTab(_ index: Int) {
+    func focusPrevSplit() {
+        if let activeWorkspaceId {
+            focusPrevSplit(in: activeWorkspaceId)
+        }
+    }
+
+    func gotoTab(in workspaceId: Int32, _ index: Int) {
+        let tabs = tabs(in: workspaceId)
         let targetTab: TerminalTab?
         if index == -1 {
             targetTab = tabs.last
@@ -354,44 +707,49 @@ class TabManager: ObservableObject {
             return
         }
         guard let tab = targetTab else { return }
-        selectTab(tab)
+        selectTab(tab, in: workspaceId)
     }
 
-    // MARK: - Layout Resize (Container-driven, SoT = MoonBit)
+    func gotoTab(_ index: Int) {
+        if let activeWorkspaceId {
+            gotoTab(in: activeWorkspaceId, index)
+        }
+    }
 
-    /// Last known total container dimensions (in pixels).
-    /// Stored so forceLayoutResize can replay without needing GeometryReader.
-    private(set) var lastTotalWidth: CGFloat = 0
-    private(set) var lastTotalHeight: CGFloat = 0
-
-    /// Called by PanelSplitView's GeometryReader when the container size changes.
-    /// Passes pixel dimensions directly to MoonBit, which converts to grid cells
-    /// using its own cell metrics (SoT) and distributes space via the layout tree.
     @discardableResult
-    func applyLayoutResize(totalWidth: CGFloat, totalHeight: CGFloat) -> Bool {
-        // Avoid redundant resizes for the same dimensions
-        guard abs(totalWidth - lastTotalWidth) > 1 || abs(totalHeight - lastTotalHeight) > 1 else {
+    func applyLayoutResize(
+        in workspaceId: Int32,
+        totalWidth: CGFloat,
+        totalHeight: CGFloat
+    ) -> Bool {
+        let currentSize = workspaceSizes[workspaceId] ?? .zero
+        guard abs(totalWidth - currentSize.width) > 1 || abs(totalHeight - currentSize.height) > 1 else {
             return false
         }
-        lastTotalWidth = totalWidth
-        lastTotalHeight = totalHeight
-
-        let panelDims = bridge.resizeLayoutPx(
-            widthPx: Int(totalWidth), heightPx: Int(totalHeight))
-        return applyPanelDimensions(panelDims)
+        workspaceSizes[workspaceId] = CGSize(width: totalWidth, height: totalHeight)
+        guard activeWorkspaceId == workspaceId else {
+            return false
+        }
+        let panelDims = bridge.resizeLayoutPx(widthPx: Int(totalWidth), heightPx: Int(totalHeight))
+        return applyPanelDimensions(panelDims, in: workspaceId)
     }
 
-    /// Apply panel dimensions to all panels — shared by layout resize and divider drag.
     @discardableResult
-    func applyPanelDimensions(_ panelDims: [MoonBitBridge.PanelDimensions]) -> Bool {
-        guard let tab = selectedTab, !panelDims.isEmpty else { return false }
+    func applyPanelDimensions(
+        _ panelDims: [MoonBitBridge.PanelDimensions],
+        in workspaceId: Int32
+    ) -> Bool {
+        guard let tab = selectedTab(in: workspaceId), !panelDims.isEmpty else { return false }
 
         for dim in panelDims {
             if let panel = tab.panel(forPanelId: dim.panelId) {
                 panel.state.gridCache.updateDimensions(rows: dim.rows, cols: dim.cols)
                 if panel.state.pty.isConnected {
-                    bridge.ptyResize(masterFd: panel.state.pty.masterFd,
-                                     rows: dim.rows, cols: dim.cols)
+                    bridge.ptyResize(
+                        masterFd: panel.state.pty.masterFd,
+                        rows: dim.rows,
+                        cols: dim.cols
+                    )
                 }
                 panel.state.refresh()
             }
@@ -399,61 +757,144 @@ class TabManager: ObservableObject {
         return true
     }
 
-    /// Notify MoonBit that a divider moved.
-    /// panelId: first leaf's panel ID (identifies the split).
-    /// firstSizePx: first child's pixel size along the split axis.
-    /// totalSizePx: total available pixel size along the split axis.
     @discardableResult
-    func notifyDividerMoved(panelId: Int32, firstSizePx: Int, totalSizePx: Int) -> Bool {
+    func notifyDividerMoved(
+        in workspaceId: Int32,
+        panelId: Int32,
+        firstSizePx: Int,
+        totalSizePx: Int
+    ) -> Bool {
+        activateWorkspaceIfNeeded(workspaceId)
         let panelDims = bridge.notifyPanelResize(
             panelId: panelId,
             firstSizePx: firstSizePx,
             totalSizePx: totalSizePx
         )
-        return applyPanelDimensions(panelDims)
+        return applyPanelDimensions(panelDims, in: workspaceId)
     }
 
-    // MARK: - Sync
+    @discardableResult
+    func syncWorkspacesFromBridge() -> Bool {
+        let snapshots = bridge.getWorkspaceSnapshot()
 
-    /// Sync the Swift-side selected tab with MoonBit's active tab.
-    private func syncSelectedTab() {
-        let tabInfos = bridge.listTabs()
-        if let active = tabInfos.first(where: { $0.isActive }) {
-            if let swiftTab = tabs.first(where: { $0.tabId == Int32(active.id) }) {
-                selectedTabId = swiftTab.id
+        if snapshots.isEmpty {
+            for tab in tabsById.values {
+                for panel in tab.panels {
+                    panel.state.stopPtyLoop()
+                }
+            }
+            tabsById.removeAll()
+            workspaces.removeAll()
+            activeWorkspaceId = nil
+            primaryWindowContext.workspaceId = nil
+            return true
+        }
+
+        let oldWorkspaces = Dictionary(uniqueKeysWithValues: workspaces.map { ($0.workspaceId, $0) })
+        let visibleTabIds = Set(snapshots.flatMap { $0.tabs.map(\.tabId) })
+        let removedTabIds = Set(tabsById.keys).subtracting(visibleTabIds)
+        for tabId in removedTabIds {
+            if let tab = tabsById.removeValue(forKey: tabId) {
+                for panel in tab.panels {
+                    panel.state.stopPtyLoop()
+                }
             }
         }
+
+        var orderedWorkspaces: [TerminalWorkspace] = []
+        for snapshot in snapshots {
+            let workspace = oldWorkspaces[snapshot.workspaceId] ?? TerminalWorkspace(workspaceId: snapshot.workspaceId)
+            workspace.isActive = snapshot.isActive
+            workspace.selectedTabId = snapshot.activeTabId >= 0 ? snapshot.activeTabId : snapshot.tabs.first?.tabId
+            workspace.orderedTabIds = snapshot.tabs.map(\.tabId)
+
+            for tabInfo in snapshot.tabs {
+                let tab = tabsById[tabInfo.tabId] ?? TerminalTab(tabId: tabInfo.tabId)
+                tab.isActive = tabInfo.isActive
+                if !tabInfo.title.isEmpty {
+                    tab.title = tabInfo.title
+                }
+                tabsById[tabInfo.tabId] = tab
+            }
+
+            orderedWorkspaces.append(workspace)
+        }
+
+        workspaces = orderedWorkspaces
+        activeWorkspaceId = snapshots.first(where: { $0.isActive })?.workspaceId ?? snapshots.first?.workspaceId
+        let workspaceIds = Set(orderedWorkspaces.map(\.workspaceId))
+        if let currentPrimary = primaryWindowContext.workspaceId,
+           !workspaceIds.contains(currentPrimary) {
+            primaryWindowContext.workspaceId = orderedWorkspaces.first?.workspaceId
+        } else if primaryWindowContext.workspaceId == nil {
+            primaryWindowContext.workspaceId = activeWorkspaceId
+        }
+        return true
     }
 
-    // MARK: - First Responder Management
-
-    /// Make the focused panel's TerminalBaseView the first responder.
-    /// Called after split, close, focus change, etc. to ensure keyboard
-    /// input goes to the correct panel.
-    ///
-    /// Uses a short async delay because SwiftUI may not have created the
-    /// new view yet when this is called from splitFocusedPanel.
-    func makeFocusedPanelFirstResponder() {
+    func makeFocusedPanelFirstResponder(in workspaceId: Int32) {
         DispatchQueue.main.async { [weak self] in
-            guard let self = self,
-                  let focused = self.focusedPanel,
+            guard let self,
+                  let focused = self.focusedPanel(in: workspaceId),
                   let view = focused.state.terminalView,
-                  let window = view.window
-            else { return }
+                  let window = view.window else { return }
             window.makeFirstResponder(view)
         }
     }
 
-    // MARK: - Cleanup
-
     func closeAll() {
-        for tab in tabs {
+        for tab in tabsById.values {
             for panel in tab.panels {
                 panel.state.stopPtyLoop()
             }
         }
         bridge.shutdown()
-        tabs.removeAll()
-        selectedTabId = nil
+        tabsById.removeAll()
+        workspaces.removeAll()
+        activeWorkspaceId = nil
+        primaryWindowContext.workspaceId = nil
+    }
+
+    private func activateWorkspaceIfNeeded(_ workspaceId: Int32?) {
+        guard let workspaceId else { return }
+        if activeWorkspaceId != workspaceId {
+            _ = bridge.activateWorkspace(workspaceId: workspaceId)
+            _ = syncWorkspacesFromBridge()
+        }
+    }
+
+    private func forceLayoutResize(for workspaceId: Int32) {
+        guard let size = workspaceSizes[workspaceId], size.width > 0, size.height > 0 else { return }
+        activateWorkspaceIfNeeded(workspaceId)
+        let panelDims = bridge.resizeLayoutPx(
+            widthPx: Int(size.width),
+            heightPx: Int(size.height)
+        )
+        _ = applyPanelDimensions(panelDims, in: workspaceId)
+    }
+
+    private func hoveredTarget(at screenPoint: CGPoint) -> TabDragHoverTarget? {
+        // Tab bar takes priority over all other targets — check it first.
+        // This avoids the need to tune frame sizes relative to content/panel zones.
+        for (workspaceId, barFrame) in tabBarFrames {
+            if barFrame.contains(screenPoint) {
+                return .tabBar(workspaceId: workspaceId)
+            }
+        }
+
+        // Fall through to registered drop targets (panel, workspaceContent, etc.).
+        let candidates = dropTargets.values.filter { $0.frame.contains(screenPoint) }
+        guard !candidates.isEmpty else { return nil }
+        let sorted = candidates.sorted { lhs, rhs in
+            (lhs.frame.width * lhs.frame.height) < (rhs.frame.width * rhs.frame.height)
+        }
+        return sorted.first?.target
+    }
+
+    private func shouldDetachDraggedTabOutsideWindows(_ dragState: TabDragState) -> Bool {
+        guard canDetachTabToNewWindow(tabId: dragState.tabId) else { return false }
+        return !NSApp.windows.contains(where: { window in
+            window.isVisible && window.frame.contains(dragState.screenPoint)
+        })
     }
 }

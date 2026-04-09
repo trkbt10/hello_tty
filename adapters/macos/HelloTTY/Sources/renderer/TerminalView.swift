@@ -47,6 +47,7 @@ struct VisualEffectBackground: NSViewRepresentable {
 struct TerminalView: NSViewRepresentable {
     @ObservedObject var state: TerminalState
     var tabManager: TabManager?
+    var workspaceId: Int32?
 
     func makeNSView(context: Context) -> NSView {
         let view: TerminalBaseView
@@ -56,6 +57,7 @@ struct TerminalView: NSViewRepresentable {
             view = TerminalNSView()
         }
         view.tabManager = tabManager
+        view.workspaceId = workspaceId
         view.terminalState = state
         state.terminalView = view
         return view
@@ -65,6 +67,7 @@ struct TerminalView: NSViewRepresentable {
         guard let baseView = nsView as? TerminalBaseView else { return }
         let stateChanged = baseView.terminalState !== state
         baseView.tabManager = tabManager
+        baseView.workspaceId = workspaceId
         baseView.terminalState = state
         state.terminalView = baseView
         // If the state changed (different panel), rebind the existing GPU
@@ -163,12 +166,18 @@ class TerminalState: ObservableObject {
         }
 
         // Wire PTY output → session processing → grid refresh
+        // Reply data (DSR cursor position reports, DA device attributes) is
+        // written back to the PTY immediately so the shell can update its state.
         pty.onOutput = { [weak self] str in
             guard let self = self else { return }
+            let reply: String?
             if self.sessionId >= 0 {
-                _ = self.bridge.processOutputFor(sessionId: self.sessionId, data: str)
+                reply = self.bridge.processOutputFor(sessionId: self.sessionId, data: str)
             } else {
-                _ = self.bridge.processOutput(str)
+                reply = self.bridge.processOutput(str)
+            }
+            if let reply = reply {
+                self.pty.writeEscapeSequence(reply)
             }
             self.refresh()
         }

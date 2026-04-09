@@ -2,6 +2,10 @@
 package "trkbt10/hello_tty/src/bridge"
 
 // Values
+pub fn ffi_activate_workspace(Bytes) -> Int
+
+pub fn ffi_attach_tab_to_workspace(Bytes, Bytes, Bytes) -> Int
+
 pub fn ffi_classify_key(Bytes, Bytes, Bytes) -> Int
 
 pub fn ffi_close_panel(Bytes) -> Int
@@ -12,7 +16,11 @@ pub fn ffi_create_session(Bytes, Bytes) -> Bytes
 
 pub fn ffi_create_tab(Bytes, Bytes) -> Bytes
 
+pub fn ffi_cursor_move_sequence(Bytes, Bytes, Bytes) -> Bytes
+
 pub fn ffi_destroy_session(Bytes) -> Int
+
+pub fn ffi_detach_tab_to_new_workspace(Bytes) -> Int
 
 pub fn ffi_focus_direction(Bytes) -> Int
 
@@ -36,6 +44,10 @@ pub fn ffi_get_grid() -> Bytes
 
 pub fn ffi_get_grid_for(Bytes) -> Bytes
 
+pub fn ffi_get_input_region() -> Bytes
+
+pub fn ffi_get_input_region_for(Bytes) -> Bytes
+
 pub fn ffi_get_layout() -> Bytes
 
 pub fn ffi_get_modes() -> Bytes
@@ -47,6 +59,8 @@ pub fn ffi_get_theme() -> Bytes
 pub fn ffi_get_title() -> Bytes
 
 pub fn ffi_get_viewport_offset(Bytes) -> Int
+
+pub fn ffi_get_workspace_snapshot() -> Bytes
 
 pub fn ffi_gpu_init(Bytes, Bytes, Bytes) -> Int
 
@@ -64,9 +78,13 @@ pub fn ffi_handle_key_for(Bytes, Bytes, Bytes) -> Bytes
 
 pub fn ffi_init(Bytes, Bytes) -> Int
 
+pub fn ffi_is_in_input_region(Bytes, Bytes, Bytes) -> Int
+
 pub fn ffi_list_sessions() -> Bytes
 
 pub fn ffi_list_tabs() -> Bytes
+
+pub fn ffi_merge_tab_into_panel(Bytes, Bytes, Bytes) -> Int
 
 pub fn ffi_next_tab() -> Int
 
@@ -76,13 +94,15 @@ pub fn ffi_pixel_to_grid(Bytes, Bytes, Bytes) -> Bytes
 
 pub fn ffi_prev_tab() -> Int
 
-pub fn ffi_process_output(Bytes) -> Int
+pub fn ffi_process_output(Bytes) -> Bytes
 
-pub fn ffi_process_output_for(Bytes, Bytes) -> Int
+pub fn ffi_process_output_for(Bytes, Bytes) -> Bytes
 
 pub fn ffi_render_frame() -> Int
 
 pub fn ffi_render_frame_for(Bytes) -> Int
+
+pub fn ffi_reorder_tab(Bytes, Bytes) -> Int
 
 pub fn ffi_reset_viewport(Bytes) -> Int
 
@@ -97,6 +117,8 @@ pub fn ffi_resize_session(Bytes, Bytes, Bytes) -> Int
 pub fn ffi_scroll_viewport_down(Bytes, Bytes) -> Int
 
 pub fn ffi_scroll_viewport_up(Bytes, Bytes) -> Int
+
+pub fn ffi_set_feature(Bytes, Bytes, Bytes) -> Int
 
 pub fn ffi_shutdown() -> Int
 

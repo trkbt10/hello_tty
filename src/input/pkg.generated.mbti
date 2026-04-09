@@ -34,6 +34,9 @@ pub(all) enum KeyClassification {
   NextTab
   PrevTab
   GotoTab(Int)
+  ClipboardCut
+  SelectAll
+  FindInTerminal
 } derive(Eq, Show)
 
 pub(all) struct KeyCombo {

@@ -57,6 +57,12 @@
 #define mbt_ffi_next_tab          _M0FP47trkbt1010hello__tty3src6bridge14ffi__next__tab
 #define mbt_ffi_prev_tab          _M0FP47trkbt1010hello__tty3src6bridge14ffi__prev__tab
 #define mbt_ffi_list_tabs         _M0FP47trkbt1010hello__tty3src6bridge15ffi__list__tabs
+#define mbt_ffi_reorder_tab      _M0FP47trkbt1010hello__tty3src6bridge17ffi__reorder__tab
+#define mbt_ffi_activate_workspace _M0FP47trkbt1010hello__tty3src6bridge24ffi__activate__workspace
+#define mbt_ffi_detach_tab_to_new_workspace _M0FP47trkbt1010hello__tty3src6bridge36ffi__detach__tab__to__new__workspace
+#define mbt_ffi_attach_tab_to_workspace _M0FP47trkbt1010hello__tty3src6bridge31ffi__attach__tab__to__workspace
+#define mbt_ffi_merge_tab_into_panel _M0FP47trkbt1010hello__tty3src6bridge28ffi__merge__tab__into__panel
+#define mbt_ffi_get_workspace_snapshot _M0FP47trkbt1010hello__tty3src6bridge29ffi__get__workspace__snapshot
 #define mbt_ffi_split_panel       _M0FP47trkbt1010hello__tty3src6bridge17ffi__split__panel
 #define mbt_ffi_close_panel       _M0FP47trkbt1010hello__tty3src6bridge17ffi__close__panel
 #define mbt_ffi_focus_panel       _M0FP47trkbt1010hello__tty3src6bridge17ffi__focus__panel
@@ -110,7 +116,7 @@ extern void moonbit_init(void);
 // MoonBit exported functions
 // Legacy single-session
 extern int32_t         mbt_ffi_init(moonbit_bytes_t rows, moonbit_bytes_t cols);
-extern int32_t         mbt_ffi_process_output(moonbit_bytes_t data);
+extern moonbit_bytes_t mbt_ffi_process_output(moonbit_bytes_t data);
 extern moonbit_bytes_t mbt_ffi_handle_key(moonbit_bytes_t key, moonbit_bytes_t mods);
 extern int32_t         mbt_ffi_resize(moonbit_bytes_t rows, moonbit_bytes_t cols);
 extern moonbit_bytes_t mbt_ffi_get_title(void);
@@ -149,6 +155,12 @@ extern int32_t         mbt_ffi_switch_tab(moonbit_bytes_t tab_id);
 extern int32_t         mbt_ffi_next_tab(void);
 extern int32_t         mbt_ffi_prev_tab(void);
 extern moonbit_bytes_t mbt_ffi_list_tabs(void);
+extern int32_t         mbt_ffi_reorder_tab(moonbit_bytes_t tab_id, moonbit_bytes_t target_index);
+extern int32_t         mbt_ffi_activate_workspace(moonbit_bytes_t workspace_id);
+extern int32_t         mbt_ffi_detach_tab_to_new_workspace(moonbit_bytes_t tab_id);
+extern int32_t         mbt_ffi_attach_tab_to_workspace(moonbit_bytes_t tab_id, moonbit_bytes_t workspace_id, moonbit_bytes_t target_index);
+extern int32_t         mbt_ffi_merge_tab_into_panel(moonbit_bytes_t tab_id, moonbit_bytes_t target_panel_id, moonbit_bytes_t direction);
+extern moonbit_bytes_t mbt_ffi_get_workspace_snapshot(void);
 extern moonbit_bytes_t mbt_ffi_split_panel(moonbit_bytes_t panel_id, moonbit_bytes_t direction);
 extern int32_t         mbt_ffi_close_panel(moonbit_bytes_t panel_id);
 extern int32_t         mbt_ffi_focus_panel(moonbit_bytes_t panel_id);
@@ -174,7 +186,7 @@ extern int32_t         mbt_ffi_gpu_surface_destroy(moonbit_bytes_t session_id);
 extern int32_t         mbt_ffi_gpu_surface_resize(moonbit_bytes_t session_id, moonbit_bytes_t width, moonbit_bytes_t height);
 
 // Session-targeted operations
-extern int32_t         mbt_ffi_process_output_for(moonbit_bytes_t session_id, moonbit_bytes_t data);
+extern moonbit_bytes_t mbt_ffi_process_output_for(moonbit_bytes_t session_id, moonbit_bytes_t data);
 extern moonbit_bytes_t mbt_ffi_get_grid_for(moonbit_bytes_t session_id);
 extern moonbit_bytes_t mbt_ffi_handle_key_for(moonbit_bytes_t session_id, moonbit_bytes_t key, moonbit_bytes_t mods);
 extern int32_t         mbt_ffi_resize_session(moonbit_bytes_t session_id, moonbit_bytes_t rows, moonbit_bytes_t cols);
@@ -241,10 +253,11 @@ int32_t hello_tty_shutdown(void) {
     return mbt_ffi_shutdown();
 }
 
-int32_t hello_tty_process_output(const char *data) {
+char *hello_tty_process_output(const char *data) {
     ensure_init();
     moonbit_bytes_t db = cstr_to_moonbit_bytes(data);
-    return mbt_ffi_process_output(db);
+    moonbit_bytes_t result = mbt_ffi_process_output(db);
+    return moonbit_bytes_to_cstr(result);
 }
 
 char *hello_tty_handle_key(const char *key_code, const char *modifiers) {
@@ -483,6 +496,51 @@ char *hello_tty_list_tabs(void) {
     return moonbit_bytes_to_cstr(result);
 }
 
+int32_t hello_tty_reorder_tab(const char *tab_id, const char *target_index) {
+    ensure_init();
+    moonbit_bytes_t tb = cstr_to_moonbit_bytes(tab_id);
+    moonbit_bytes_t ib = cstr_to_moonbit_bytes(target_index);
+    return mbt_ffi_reorder_tab(tb, ib);
+}
+
+int32_t hello_tty_activate_workspace(const char *workspace_id) {
+    ensure_init();
+    moonbit_bytes_t wb = cstr_to_moonbit_bytes(workspace_id);
+    return mbt_ffi_activate_workspace(wb);
+}
+
+int32_t hello_tty_detach_tab_to_new_workspace(const char *tab_id) {
+    ensure_init();
+    moonbit_bytes_t tb = cstr_to_moonbit_bytes(tab_id);
+    return mbt_ffi_detach_tab_to_new_workspace(tb);
+}
+
+int32_t hello_tty_attach_tab_to_workspace(const char *tab_id,
+                                          const char *workspace_id,
+                                          const char *target_index) {
+    ensure_init();
+    moonbit_bytes_t tb = cstr_to_moonbit_bytes(tab_id);
+    moonbit_bytes_t wb = cstr_to_moonbit_bytes(workspace_id);
+    moonbit_bytes_t ib = cstr_to_moonbit_bytes(target_index);
+    return mbt_ffi_attach_tab_to_workspace(tb, wb, ib);
+}
+
+int32_t hello_tty_merge_tab_into_panel(const char *tab_id,
+                                       const char *target_panel_id,
+                                       const char *direction) {
+    ensure_init();
+    moonbit_bytes_t tb = cstr_to_moonbit_bytes(tab_id);
+    moonbit_bytes_t pb = cstr_to_moonbit_bytes(target_panel_id);
+    moonbit_bytes_t db = cstr_to_moonbit_bytes(direction);
+    return mbt_ffi_merge_tab_into_panel(tb, pb, db);
+}
+
+char *hello_tty_get_workspace_snapshot(void) {
+    ensure_init();
+    moonbit_bytes_t result = mbt_ffi_get_workspace_snapshot();
+    return moonbit_bytes_to_cstr(result);
+}
+
 char *hello_tty_split_panel(const char *panel_id, const char *direction) {
     ensure_init();
     moonbit_bytes_t pb = cstr_to_moonbit_bytes(panel_id);
@@ -534,11 +592,12 @@ int32_t hello_tty_get_focused_panel_id(void) {
 
 // ---------- Session-Targeted Operations ----------
 
-int32_t hello_tty_process_output_for(const char *session_id, const char *data) {
+char *hello_tty_process_output_for(const char *session_id, const char *data) {
     ensure_init();
     moonbit_bytes_t sb = cstr_to_moonbit_bytes(session_id);
     moonbit_bytes_t db = cstr_to_moonbit_bytes(data);
-    return mbt_ffi_process_output_for(sb, db);
+    moonbit_bytes_t result = mbt_ffi_process_output_for(sb, db);
+    return moonbit_bytes_to_cstr(result);
 }
 
 char *hello_tty_get_grid_for(const char *session_id) {

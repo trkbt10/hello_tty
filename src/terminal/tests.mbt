@@ -1057,10 +1057,7 @@ fn send_osc_133(term : Terminal, subcommand : String) -> Unit {
 
 ///|
 /// Helper: create a terminal with shell_integration enabled.
-fn term_with_shell_integration(
-  rows? : Int = 4,
-  cols? : Int = 20,
-) -> Terminal {
+fn term_with_shell_integration(rows? : Int = 4, cols? : Int = 20) -> Terminal {
   let term = Terminal::new(rows~, cols~)
   term.set_feature("shell_integration", true)
   term
@@ -1115,7 +1112,7 @@ test "osc133/get_input_region_during_command_input" {
       assert_eq(er, 0)
       assert_eq(ec, 7)
     }
-    None => fail!("expected input region to be active")
+    None => fail("expected input region to be active")
   }
 }
 
@@ -1180,7 +1177,7 @@ test "osc133/full_cycle_A_B_C_D_A" {
       assert_eq(sr, 2)
       assert_eq(sc, 2)
     }
-    None => fail!("expected input region on second prompt")
+    None => fail("expected input region on second prompt")
   }
 }
 
@@ -1330,4 +1327,170 @@ test "osc133/cursor_move_sequence_app_mode" {
   // Move 2 left: should use SS3 sequences
   let seq = term.cursor_move_sequence(0, 5)
   assert_eq(seq, "\x1bOD\x1bOD")
+}
+
+// ========== Line wrapping regression tests ==========
+// These tests simulate what readline/zsh does when input wraps across lines.
+
+///|
+test "wrap/basic_auto_wrap_fills_two_lines" {
+  // 10-column terminal, type 15 chars → 10 on row 0, 5 on row 1
+  let term = Terminal::new(rows=5, cols=10)
+  feed(term, "ABCDEFGHIJ") // exactly 10 chars → fills row 0, wrap_pending
+  feed(term, "KLMNO") // 5 more → wraps to row 1
+  let grid = term.get_grid()
+  // Row 0 should have ABCDEFGHIJ
+  assert_eq(grid.get_cell(0, 0).char, 'A')
+  assert_eq(grid.get_cell(0, 9).char, 'J')
+  // Row 1 should have KLMNO, wrapped flag set
+  assert_eq(grid.get_cell(1, 0).char, 'K')
+  assert_eq(grid.get_cell(1, 4).char, 'O')
+  assert_true(grid.lines[1].wrapped)
+  // Cursor should be at row 1, col 5
+  assert_eq(term.get_cursor().row, 1)
+  assert_eq(term.get_cursor().col, 5)
+}
+
+///|
+test "wrap/readline_redraw_after_wrap" {
+  // Simulate readline redrawing wrapped input:
+  // 1. Prompt "$ " on row 0, user types 12 chars (total 14 chars) → wraps to row 1
+  // 2. Readline redraws: CR, CUU to row 0, ED (erase to end), redraw all
+  let term = Terminal::new(rows=5, cols=10)
+  // Step 1: Initial prompt + input
+  feed(term, "$ ABCDEFGH") // 10 chars → fills row 0
+  feed(term, "IJKL") // 4 more → wraps to row 1
+  // Verify initial state
+  assert_eq(term.get_cursor().row, 1)
+  assert_eq(term.get_cursor().col, 4)
+  // Step 2: Readline redraws (user typed one more char)
+  // CR → col 0 of current row (row 1)
+  feed(term, "\r")
+  assert_eq(term.get_cursor().row, 1)
+  assert_eq(term.get_cursor().col, 0)
+  // CUU 1 → move to row 0
+  feed(term, "\u001b[A")
+  assert_eq(term.get_cursor().row, 0)
+  assert_eq(term.get_cursor().col, 0)
+  // ED 0 → erase from cursor to end of screen
+  feed(term, "\u001b[J")
+  // Verify rows are cleared
+  let grid = term.get_grid()
+  assert_true(grid.get_cell(0, 0).is_empty())
+  assert_true(grid.get_cell(1, 0).is_empty())
+  // Redraw prompt + extended input
+  feed(term, "$ ABCDEFGH") // row 0
+  feed(term, "IJKLM") // row 1 (one more char than before)
+  // Verify final state
+  let grid2 = term.get_grid()
+  assert_eq(grid2.get_cell(0, 0).char, '$')
+  assert_eq(grid2.get_cell(0, 2).char, 'A')
+  assert_eq(grid2.get_cell(0, 9).char, 'H')
+  assert_eq(grid2.get_cell(1, 0).char, 'I')
+  assert_eq(grid2.get_cell(1, 4).char, 'M')
+  assert_eq(term.get_cursor().row, 1)
+  assert_eq(term.get_cursor().col, 5)
+}
+
+///|
+test "wrap/wrap_pending_then_cr" {
+  // When cursor is at wrap_pending state (last column written), CR should
+  // move to col 0 of the CURRENT row, NOT the next row
+  let term = Terminal::new(rows=5, cols=10)
+  feed(term, "ABCDEFGHIJ") // exactly 10 chars → wrap_pending, cursor at col 9
+  // CR while wrap_pending
+  feed(term, "\r")
+  assert_eq(term.get_cursor().row, 0) // should stay on row 0
+  assert_eq(term.get_cursor().col, 0)
+}
+
+///|
+test "wrap/ed_clears_wrapped_continuation_lines" {
+  // ED mode 0 should clear from cursor through all remaining rows
+  let term = Terminal::new(rows=5, cols=10)
+  // Fill 3 rows with wrapped text
+  feed(term, "ABCDEFGHIJ") // row 0
+  feed(term, "KLMNOPQRST") // row 1
+  feed(term, "UVWXY") // row 2
+  assert_eq(term.get_cursor().row, 2)
+  // Move to start of row 0
+  feed(term, "\r")
+  feed(term, "\u001b[A") // CUU 1 → row 1
+  feed(term, "\u001b[A") // CUU 1 → row 0
+  assert_eq(term.get_cursor().row, 0)
+  assert_eq(term.get_cursor().col, 0)
+  // ED 0 → erase from cursor to end of display
+  feed(term, "\u001b[J")
+  let grid = term.get_grid()
+  // All 3 rows should be cleared
+  for row in 0..<3 {
+    for col in 0..<10 {
+      assert_true(grid.get_cell(row, col).is_empty())
+    }
+  }
+}
+
+// ========== DSR / DA reply tests ==========
+
+///|
+test "dsr/cursor_position_report" {
+  let term = Terminal::new(rows=5, cols=10)
+  feed(term, "ABCDE") // cursor at row 0, col 5
+  // DSR mode 6 (CPR): ESC[6n
+  feed(term, "\u001b[6n")
+  let reply = term.drain_replies()
+  // Should report row=1, col=6 (1-based)
+  assert_eq(reply, "\x1b[1;6R")
+}
+
+///|
+test "dsr/cursor_position_after_wrap" {
+  // When cursor is at wrap_pending state, DSR should report last column
+  let term = Terminal::new(rows=5, cols=10)
+  feed(term, "ABCDEFGHIJ") // 10 chars → wrap_pending at col 9
+  feed(term, "\u001b[6n")
+  let reply = term.drain_replies()
+  // Cursor is at col 9 (0-based) = col 10 (1-based), row 0 = row 1 (1-based)
+  assert_eq(reply, "\x1b[1;10R")
+}
+
+///|
+test "dsr/status_report" {
+  let term = Terminal::new(rows=5, cols=10)
+  // DSR mode 5 (status): ESC[5n
+  feed(term, "\u001b[5n")
+  let reply = term.drain_replies()
+  assert_eq(reply, "\x1b[0n")
+}
+
+///|
+test "da/primary_device_attributes" {
+  let term = Terminal::new(rows=5, cols=10)
+  // DA1: ESC[c
+  feed(term, "\u001b[c")
+  let reply = term.drain_replies()
+  assert_eq(reply, "\x1b[?62;22c")
+}
+
+///|
+test "da/secondary_device_attributes" {
+  let term = Terminal::new(rows=5, cols=10)
+  // DA2: ESC[>c
+  feed(term, "\u001b[>c")
+  let reply = term.drain_replies()
+  assert_eq(reply, "\x1b[>1;0;0c")
+}
+
+///|
+test "dsr/multiple_replies_accumulated" {
+  let term = Terminal::new(rows=5, cols=10)
+  feed(term, "AB")
+  // Send multiple queries in one batch
+  feed(term, "\u001b[6n\u001b[5n")
+  let reply = term.drain_replies()
+  // Both replies should be concatenated
+  assert_eq(reply, "\x1b[1;3R\x1b[0n")
+  // After drain, buffer should be empty
+  let empty = term.drain_replies()
+  assert_eq(empty, "")
 }

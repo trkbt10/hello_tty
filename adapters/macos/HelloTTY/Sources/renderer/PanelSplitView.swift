@@ -1,41 +1,54 @@
 import SwiftUI
 
 /// Recursive SwiftUI view that renders the layout tree from MoonBit.
-///
-/// The layout tree is a binary tree: each internal node is a Split
-/// (horizontal or vertical), each leaf is a panel containing a TerminalView.
-///
-/// This view queries the layout from MoonBit via ffi_get_layout() and
-/// renders it as nested HStack/VStack with dividers.
 struct PanelSplitView: View {
     @ObservedObject var tabManager: TabManager
+    let workspaceId: Int32
 
     var body: some View {
         GeometryReader { geometry in
             content(for: geometry.size)
         }
+        .background(
+            ScreenFrameReporter { frame in
+                let id = "workspace-\(workspaceId)-content"
+                if let frame {
+                    tabManager.registerDropTarget(
+                        id: id,
+                        target: .workspaceContent(workspaceId: workspaceId),
+                        frame: frame
+                    )
+                } else {
+                    tabManager.unregisterDropTarget(id: id)
+                }
+            }
+            .allowsHitTesting(false)
+        )
+        .onDisappear {
+            tabManager.unregisterDropTarget(id: "workspace-\(workspaceId)-content")
+        }
     }
 
     private func content(for size: CGSize) -> some View {
-        // Trigger layout resize from the container level.
-        // This is the ONLY place that calls resizeLayout — individual panel
-        // views must NOT call it (they only know their own partial bounds).
         let _ = tabManager.applyLayoutResize(
+            in: workspaceId,
             totalWidth: size.width,
             totalHeight: size.height
         )
         return Group {
-            if let tab = tabManager.selectedTab {
+            if let tab = tabManager.selectedTab(in: workspaceId) {
                 if let layoutJson = tabManager.bridge.getLayout(),
                    let node = LayoutTree.parse(json: layoutJson) {
-                    LayoutNodeView(node: node, tab: tab, tabManager: tabManager)
+                    LayoutNodeView(
+                        node: node,
+                        tab: tab,
+                        tabManager: tabManager,
+                        workspaceId: workspaceId
+                    )
+                } else if let panel = tab.panels.first {
+                    panelView(for: panel)
                 } else {
-                    // Fallback: render the first panel full-size
-                    if let panel = tab.panels.first {
-                        panelView(for: panel)
-                    } else {
-                        Color.black
-                    }
+                    Color.black
                 }
             } else {
                 Color.black
@@ -44,27 +57,43 @@ struct PanelSplitView: View {
     }
 
     private func panelView(for panel: TerminalPanel) -> some View {
-        TerminalView(state: panel.state, tabManager: tabManager)
-            .border(panel.isFocused ? Color.accentColor.opacity(0.6) : Color.clear, width: 1)
+        TerminalView(state: panel.state, tabManager: tabManager, workspaceId: workspaceId)
+            .background(
+                PanelDropFrameRegistration(
+                    tabManager: tabManager,
+                    workspaceId: workspaceId,
+                    panelId: panel.panelId
+                )
+            )
+            .overlay(panelDropOverlay(panelId: panel.panelId, isFocused: panel.isFocused))
             .onTapGesture {
-                tabManager.focusPanel(panelId: panel.panelId)
+                tabManager.focusPanel(in: workspaceId, panelId: panel.panelId)
+            }
+    }
+
+    private func panelDropOverlay(panelId: Int32, isFocused: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 0)
+            .stroke(
+                tabManager.isHoveringPanel(workspaceId: workspaceId, panelId: panelId)
+                    ? Color.accentColor.opacity(0.9)
+                    : (isFocused ? Color.accentColor.opacity(0.6) : Color.clear),
+                lineWidth: tabManager.isHoveringPanel(workspaceId: workspaceId, panelId: panelId) ? 3 : 1
+            )
+            .onDisappear {
+                tabManager.unregisterDropTarget(id: "workspace-\(workspaceId)-panel-\(panelId)")
             }
     }
 }
 
-// MARK: - Layout Tree Model (parsed from MoonBit JSON)
-
-/// Swift representation of MoonBit's LayoutNode, parsed from ffi_get_layout() JSON.
 indirect enum LayoutTree {
     case leaf(panelId: Int32, sessionId: Int32)
     case split(direction: SplitDir, ratio: CGFloat, first: LayoutTree, second: LayoutTree)
 
     enum SplitDir {
-        case vertical   // left/right
-        case horizontal // top/bottom
+        case vertical
+        case horizontal
     }
 
-    /// Parse the layout JSON from MoonBit into a LayoutTree.
     static func parse(json: String) -> LayoutTree? {
         guard let data = json.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -72,11 +101,12 @@ indirect enum LayoutTree {
         return parseNode(obj)
     }
 
-    /// Get the panel ID of the first leaf in the tree (for divider association).
     static func firstLeafId(_ tree: LayoutTree) -> Int32 {
         switch tree {
-        case .leaf(let pid, _): return pid
-        case .split(_, _, let first, _): return firstLeafId(first)
+        case .leaf(let panelId, _):
+            return panelId
+        case .split(_, _, let first, _):
+            return firstLeafId(first)
         }
     }
 
@@ -84,47 +114,60 @@ indirect enum LayoutTree {
         guard let type = obj["type"] as? String else { return nil }
         switch type {
         case "leaf":
-            guard let pid = obj["panel_id"] as? Int,
-                  let sid = obj["session_id"] as? Int
+            guard let panelId = obj["panel_id"] as? Int,
+                  let sessionId = obj["session_id"] as? Int
             else { return nil }
-            return .leaf(panelId: Int32(pid), sessionId: Int32(sid))
+            return .leaf(panelId: Int32(panelId), sessionId: Int32(sessionId))
 
         case "split":
-            guard let dirStr = obj["direction"] as? String,
+            guard let direction = obj["direction"] as? String,
                   let ratio = obj["ratio"] as? Double,
                   let firstObj = obj["first"] as? [String: Any],
                   let secondObj = obj["second"] as? [String: Any],
                   let first = parseNode(firstObj),
                   let second = parseNode(secondObj)
             else { return nil }
-            let dir: SplitDir = (dirStr == "horizontal") ? .horizontal : .vertical
-            return .split(direction: dir, ratio: CGFloat(ratio), first: first, second: second)
-
+            return .split(
+                direction: direction == "horizontal" ? .horizontal : .vertical,
+                ratio: CGFloat(ratio),
+                first: first,
+                second: second
+            )
         default:
             return nil
         }
     }
 }
 
-// MARK: - Recursive Layout Node View
-
 struct LayoutNodeView: View {
     let node: LayoutTree
     let tab: TerminalTab
     @ObservedObject var tabManager: TabManager
+    let workspaceId: Int32
 
     var body: some View {
         switch node {
         case .leaf(let panelId, _):
             if let panel = tab.panel(forPanelId: panelId) {
-                TerminalView(state: panel.state, tabManager: tabManager)
+                TerminalView(state: panel.state, tabManager: tabManager, workspaceId: workspaceId)
+                    .background(
+                        PanelDropFrameRegistration(
+                            tabManager: tabManager,
+                            workspaceId: workspaceId,
+                            panelId: panelId
+                        )
+                    )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 0)
-                            .stroke(panel.isFocused ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 2)
+                        PanelDropTargetOverlay(
+                            tabManager: tabManager,
+                            workspaceId: workspaceId,
+                            panelId: panelId,
+                            isFocused: panel.isFocused
+                        )
                     )
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        tabManager.focusPanel(panelId: panelId)
+                        tabManager.focusPanel(in: workspaceId, panelId: panelId)
                     }
             } else {
                 Color.black
@@ -132,36 +175,59 @@ struct LayoutNodeView: View {
 
         case .split(let direction, let ratio, let first, let second):
             let firstLeafId = LayoutTree.firstLeafId(first)
-            let dividerSize: CGFloat = 4 // Must match DraggableDivider frame size
+            let dividerSize: CGFloat = 4
             GeometryReader { geometry in
                 switch direction {
                 case .vertical:
                     let available = geometry.size.width - dividerSize
                     HStack(spacing: 0) {
-                        LayoutNodeView(node: first, tab: tab, tabManager: tabManager)
-                            .frame(width: available * ratio)
+                        LayoutNodeView(
+                            node: first,
+                            tab: tab,
+                            tabManager: tabManager,
+                            workspaceId: workspaceId
+                        )
+                        .frame(width: available * ratio)
                         DraggableDivider(
                             direction: .vertical,
                             panelId: firstLeafId,
                             totalSize: geometry.size.width,
-                            tabManager: tabManager
+                            tabManager: tabManager,
+                            workspaceId: workspaceId
                         )
-                        LayoutNodeView(node: second, tab: tab, tabManager: tabManager)
-                            .frame(width: available * (1 - ratio))
+                        LayoutNodeView(
+                            node: second,
+                            tab: tab,
+                            tabManager: tabManager,
+                            workspaceId: workspaceId
+                        )
+                        .frame(width: available * (1 - ratio))
                     }
+
                 case .horizontal:
                     let available = geometry.size.height - dividerSize
                     VStack(spacing: 0) {
-                        LayoutNodeView(node: first, tab: tab, tabManager: tabManager)
-                            .frame(height: available * ratio)
+                        LayoutNodeView(
+                            node: first,
+                            tab: tab,
+                            tabManager: tabManager,
+                            workspaceId: workspaceId
+                        )
+                        .frame(height: available * ratio)
                         DraggableDivider(
                             direction: .horizontal,
                             panelId: firstLeafId,
                             totalSize: geometry.size.height,
-                            tabManager: tabManager
+                            tabManager: tabManager,
+                            workspaceId: workspaceId
                         )
-                        LayoutNodeView(node: second, tab: tab, tabManager: tabManager)
-                            .frame(height: available * (1 - ratio))
+                        LayoutNodeView(
+                            node: second,
+                            tab: tab,
+                            tabManager: tabManager,
+                            workspaceId: workspaceId
+                        )
+                        .frame(height: available * (1 - ratio))
                     }
                 }
             }
@@ -169,29 +235,21 @@ struct LayoutNodeView: View {
     }
 }
 
-// MARK: - Draggable Divider
-
 struct DraggableDivider: View {
     let direction: LayoutTree.SplitDir
     let panelId: Int32
     let totalSize: CGFloat
     @ObservedObject var tabManager: TabManager
+    let workspaceId: Int32
 
     @State private var isDragging = false
-    /// The pixel offset of the divider at the start of this drag gesture.
     @State private var startOffset: CGFloat = 0
-    /// Last notified first-child pixel size (to avoid redundant notifications).
     @State private var lastNotifiedSize: Int = 0
 
     var body: some View {
-        // Subtle divider that blends with the terminal background.
-        // 1px visible line + wider hit target for dragging.
         ZStack {
-            // Visible line: nearly invisible unless hovered/dragged
             Rectangle()
-                .fill(isDragging
-                    ? Color.white.opacity(0.15)
-                    : Color.white.opacity(0.06))
+                .fill(isDragging ? Color.white.opacity(0.15) : Color.white.opacity(0.06))
                 .frame(
                     width: direction == .vertical ? 1 : nil,
                     height: direction == .horizontal ? 1 : nil
@@ -201,7 +259,7 @@ struct DraggableDivider: View {
             width: direction == .vertical ? 4 : nil,
             height: direction == .horizontal ? 4 : nil
         )
-        .contentShape(Rectangle()) // Hit target is the full 4px
+        .contentShape(Rectangle())
         .onHover { hovering in
             if hovering {
                 if direction == .vertical {
@@ -219,29 +277,23 @@ struct DraggableDivider: View {
                     guard totalSize > 0 else { return }
                     if !isDragging {
                         isDragging = true
-                        // Capture the current first-child size from the ratio.
                         let currentRatio = readCurrentRatio()
                         startOffset = totalSize * currentRatio
                         lastNotifiedSize = Int(startOffset)
                     }
-                    // Compute the first child's new pixel size from the drag.
-                    let translation: CGFloat
-                    if direction == .vertical {
-                        translation = value.translation.width
-                    } else {
-                        translation = value.translation.height
-                    }
+
+                    let translation = direction == .vertical
+                        ? value.translation.width
+                        : value.translation.height
                     let dividerPx: CGFloat = 4
                     let available = totalSize - dividerPx
-                    // Loose UI clamp to prevent dragging off-screen.
-                    // MoonBit applies the authoritative min/max ratio constraint.
                     let firstSize = min(max(startOffset + translation, 20), available - 20)
                     let firstSizeInt = Int(firstSize)
 
-                    // Only notify if meaningfully different
                     if abs(firstSizeInt - lastNotifiedSize) >= 1 {
                         lastNotifiedSize = firstSizeInt
-                        tabManager.notifyDividerMoved(
+                        _ = tabManager.notifyDividerMoved(
+                            in: workspaceId,
                             panelId: panelId,
                             firstSizePx: firstSizeInt,
                             totalSizePx: Int(available)
@@ -255,7 +307,6 @@ struct DraggableDivider: View {
         )
     }
 
-    /// Read the current ratio from MoonBit's layout tree.
     private func readCurrentRatio() -> CGFloat {
         guard let layoutJson = tabManager.bridge.getLayout(),
               let node = LayoutTree.parse(json: layoutJson)
@@ -263,10 +314,10 @@ struct DraggableDivider: View {
         return findRatio(in: node, panelId: panelId) ?? 0.5
     }
 
-    /// Find the split ratio whose first child contains the given panelId.
     private func findRatio(in node: LayoutTree, panelId: Int32) -> CGFloat? {
         switch node {
-        case .leaf: return nil
+        case .leaf:
+            return nil
         case .split(_, let ratio, let first, let second):
             if LayoutTree.firstLeafId(first) == panelId {
                 return ratio
@@ -274,5 +325,47 @@ struct DraggableDivider: View {
             return findRatio(in: first, panelId: panelId)
                 ?? findRatio(in: second, panelId: panelId)
         }
+    }
+}
+
+private struct PanelDropTargetOverlay: View {
+    @ObservedObject var tabManager: TabManager
+    let workspaceId: Int32
+    let panelId: Int32
+    let isFocused: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 0)
+            .stroke(
+                tabManager.isHoveringPanel(workspaceId: workspaceId, panelId: panelId)
+                    ? Color.accentColor.opacity(0.9)
+                    : (isFocused ? Color.accentColor.opacity(0.5) : Color.clear),
+                lineWidth: tabManager.isHoveringPanel(workspaceId: workspaceId, panelId: panelId) ? 3 : 2
+            )
+            .onDisappear {
+                tabManager.unregisterDropTarget(id: "workspace-\(workspaceId)-panel-\(panelId)")
+            }
+    }
+}
+
+private struct PanelDropFrameRegistration: View {
+    @ObservedObject var tabManager: TabManager
+    let workspaceId: Int32
+    let panelId: Int32
+
+    var body: some View {
+        ScreenFrameReporter { frame in
+            let id = "workspace-\(workspaceId)-panel-\(panelId)"
+            if let frame {
+                tabManager.registerDropTarget(
+                    id: id,
+                    target: .panel(workspaceId: workspaceId, panelId: panelId),
+                    frame: frame
+                )
+            } else {
+                tabManager.unregisterDropTarget(id: id)
+            }
+        }
+        .allowsHitTesting(false)
     }
 }

@@ -54,6 +54,25 @@ pub struct Tab {
 } derive(Show)
 
 ///|
+/// Summary of a tab inside a workspace snapshot.
+pub struct WorkspaceTabSnapshot {
+  tab_id : Int
+  title : String
+  active : Bool
+  panel_count : Int
+  focused_panel_id : Int
+} derive(Show)
+
+///|
+/// Snapshot of one workspace/window and its ordered tabs.
+pub struct WorkspaceSnapshot {
+  workspace_id : Int
+  active : Bool
+  active_tab_id : Int
+  tabs : Array[WorkspaceTabSnapshot]
+} derive(Show)
+
+///|
 /// Minimum panel dimensions. Splits that would create a panel smaller
 /// than these values are rejected.
 ///

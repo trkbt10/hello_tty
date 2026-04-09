@@ -18,6 +18,10 @@ pub struct Terminal {
   features : TerminalFeatures
   /// Semantic prompt tracking (OSC 133 shell integration).
   semantic_prompt : SemanticPrompt
+  /// Reply buffer — escape sequences to write back to the PTY.
+  /// Accumulated during event processing, drained by the host after each batch.
+  /// Used for DSR (cursor position report), DA (device attributes), etc.
+  reply_buf : StringBuilder
 }
 
 ///|
@@ -44,6 +48,7 @@ pub fn Terminal::new(
     viewport_offset: 0,
     features: TerminalFeatures::default(),
     semantic_prompt: SemanticPrompt::new(),
+    reply_buf: StringBuilder::new(),
   }
 }
 
@@ -413,6 +418,39 @@ fn Terminal::handle_csi(self : Terminal, cmd : @vt_parser.CsiCommand) -> Unit {
       // ICH — Insert Characters
       let n = param(0, 1)
       grid.insert_cells(cursor.row, cursor.col, n)
+    }
+    0x63 => {
+      // DA — Device Attributes
+      let is_secondary = cmd.intermediates.length() > 0 &&
+        cmd.intermediates[0].to_int() == 0x3E // '>'
+      if is_secondary {
+        // DA2 (Secondary Device Attributes): CSI > c
+        // Report: VT220, firmware version 0, ROM cartridge 0
+        self.reply_buf.write_string("\x1b[>1;0;0c")
+      } else {
+        // DA1 (Primary Device Attributes): CSI c or CSI ? c
+        // Report: VT220 with advanced video option
+        self.reply_buf.write_string("\x1b[?62;22c")
+      }
+    }
+    0x6E => {
+      // DSR — Device Status Report
+      let mode = param(0, 0)
+      match mode {
+        5 =>
+          // Status report → "OK"
+          self.reply_buf.write_string("\x1b[0n")
+        6 => {
+          // CPR — Cursor Position Report
+          // Report as ESC[{row};{col}R (1-based)
+          self.reply_buf.write_string("\x1b[")
+          self.reply_buf.write_string((cursor.row + 1).to_string())
+          self.reply_buf.write_string(";")
+          self.reply_buf.write_string((cursor.col + 1).to_string())
+          self.reply_buf.write_string("R")
+        }
+        _ => ()
+      }
     }
     _ => () // Unknown CSI sequence — ignore
   }
@@ -808,6 +846,7 @@ pub fn Terminal::reset(self : Terminal) -> Unit {
   }
   self.title = ""
   self.semantic_prompt.state = Inactive
+  self.reply_buf.reset()
 }
 
 ///|
@@ -855,6 +894,15 @@ pub fn Terminal::get_cursor(self : Terminal) -> Cursor {
 }
 
 ///|
+/// Drain the reply buffer — returns accumulated replies and clears the buffer.
+/// The host should write the returned string to the PTY after processing output.
+pub fn Terminal::drain_replies(self : Terminal) -> String {
+  let s = self.reply_buf.to_string()
+  self.reply_buf.reset()
+  s
+}
+
+///|
 /// Get the terminal modes.
 pub fn Terminal::get_modes(self : Terminal) -> TermModes {
   self.modes
@@ -886,7 +934,10 @@ pub fn Terminal::scroll_viewport_up(self : Terminal, n : Int) -> Unit {
 ///|
 /// Scroll the viewport down (toward live) by n lines.
 pub fn Terminal::scroll_viewport_down(self : Terminal, n : Int) -> Unit {
-  self.viewport_offset = (self.viewport_offset - n).clamp(min=0, max=self.viewport_offset)
+  self.viewport_offset = (self.viewport_offset - n).clamp(
+    min=0,
+    max=self.viewport_offset,
+  )
 }
 
 ///|
@@ -965,9 +1016,7 @@ fn Terminal::scroll_up_tracked(self : Terminal, n : Int) -> Unit {
 /// Returns `Some((start_row, start_col, end_row, end_col))` when the terminal
 /// is in CommandInput state (after OSC 133;B, before C/D).
 /// The region spans from the command start position to the current cursor.
-pub fn Terminal::get_input_region(
-  self : Terminal,
-) -> (Int, Int, Int, Int)? {
+pub fn Terminal::get_input_region(self : Terminal) -> (Int, Int, Int, Int)? {
   if self.semantic_prompt.state != CommandInput {
     return None
   }

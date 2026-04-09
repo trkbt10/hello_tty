@@ -6,11 +6,10 @@ struct HelloTTYApp: App {
 
     var body: some Scene {
         WindowGroup {
-            MainWindowView()
+            MainWindowView(windowContext: appDelegate.tabManager.primaryWindowContext)
                 .environmentObject(appDelegate.tabManager)
         }
-        .windowStyle(.titleBar)
-        .windowToolbarStyle(.unified(showsTitle: false))
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 720, height: 480)
         .commands {
             // Replace default Cmd+N (new window) — we don't support multi-window yet
@@ -33,6 +32,7 @@ struct HelloTTYApp: App {
 
 struct MainWindowView: View {
     @EnvironmentObject var tabManager: TabManager
+    @ObservedObject var windowContext: WorkspaceWindowContext
 
     var body: some View {
         ZStack {
@@ -43,23 +43,46 @@ struct MainWindowView: View {
             )
             .ignoresSafeArea()
 
-            if tabManager.selectedTab != nil {
-                PanelSplitView(tabManager: tabManager)
+            if let workspaceId = windowContext.workspaceId,
+               tabManager.selectedTab(in: workspaceId) != nil {
+                PanelSplitView(tabManager: tabManager, workspaceId: workspaceId)
             } else {
                 PlaceholderView()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                GlassTabBarView(tabManager: tabManager)
-            }
-        }
         .onAppear {
-            if tabManager.tabs.isEmpty {
-                tabManager.newTab()
+            if let workspaceId = windowContext.workspaceId {
+                if tabManager.tabs(in: workspaceId).isEmpty {
+                    tabManager.newTab(in: workspaceId)
+                }
+            } else if tabManager.workspaces.isEmpty {
+                _ = tabManager.newTab()
             }
         }
+    }
+}
+
+struct TitlebarTabStripView: View {
+    @EnvironmentObject var tabManager: TabManager
+    @ObservedObject var windowContext: WorkspaceWindowContext
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            VisualEffectBackground(
+                material: .hudWindow,
+                blendingMode: .withinWindow,
+                state: .active
+            )
+            GlassTabBarView(tabManager: tabManager, windowContext: windowContext)
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 7)
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 1)
+        }
+        .frame(height: 42)
     }
 }
 
@@ -83,20 +106,35 @@ struct PlaceholderView: View {
 
 struct GlassTabBarView: View {
     @ObservedObject var tabManager: TabManager
+    @ObservedObject var windowContext: WorkspaceWindowContext
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(tabManager.tabs) { tab in
+            let tabs = tabManager.tabs(in: windowContext.workspaceId)
+            ForEach(tabs, id: \.id) { tab in
                 GlassTabCapsule(
                     tab: tab,
-                    isSelected: tabManager.selectedTabId == tab.id,
-                    onSelect: { tabManager.selectTab(tab) },
-                    onClose: { tabManager.closeTab(tab) }
+                    isSelected: tabManager.selectedTab(in: windowContext.workspaceId)?.tabId == tab.id,
+                    isBeingDragged: tabManager.isTabBeingDragged(tab.tabId),
+                    onSelect: { tabManager.selectTab(tab, in: windowContext.workspaceId) },
+                    onClose: { tabManager.closeTab(tab, in: windowContext.workspaceId) },
+                    onDetach: {
+                        if let newWorkspaceId = tabManager.detachTabToNewWindow(tabId: tab.tabId) {
+                            AppDelegate.shared?.showDetachedWindow(for: newWorkspaceId)
+                        }
+                    },
+                    onFrameChange: { frame in
+                        if let frame {
+                            tabManager.registerTabFrame(tabId: tab.tabId, frame: frame)
+                        } else {
+                            tabManager.unregisterTabFrame(tabId: tab.tabId)
+                        }
+                    }
                 )
             }
 
             Button(action: {
-                tabManager.newTab()
+                _ = tabManager.newTab(in: windowContext.workspaceId)
             }) {
                 Image(systemName: "plus")
                     .font(.system(size: 13, weight: .medium))
@@ -106,7 +144,26 @@ struct GlassTabBarView: View {
             }
             .buttonStyle(.plain)
         }
+        // Register the entire tab bar strip as a single drop target region.
+        // TabManager resolves the insertion index dynamically from x position.
+        .background(
+            ScreenFrameReporter { frame in
+                guard let workspaceId = windowContext.workspaceId else { return }
+                if let frame {
+                    tabManager.registerTabBarFrame(workspaceId: workspaceId, frame: frame)
+                } else {
+                    tabManager.unregisterTabBarFrame(workspaceId: workspaceId)
+                }
+            }
+            .allowsHitTesting(false)
+        )
+        .onDisappear {
+            if let workspaceId = windowContext.workspaceId {
+                tabManager.unregisterTabBarFrame(workspaceId: workspaceId)
+            }
+        }
     }
+
 }
 
 // MARK: - Glass Tab Capsule
@@ -114,8 +171,11 @@ struct GlassTabBarView: View {
 struct GlassTabCapsule: View {
     @ObservedObject var tab: TerminalTab
     let isSelected: Bool
+    let isBeingDragged: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
+    let onDetach: () -> Void
+    let onFrameChange: (CGRect?) -> Void
 
     @State private var isHovering = false
 
@@ -126,7 +186,40 @@ struct GlassTabCapsule: View {
                 .foregroundStyle(isSelected ? .primary : .secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
-
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .padding(.trailing, (isSelected || isHovering) ? 18 : 0)
+        .frame(minWidth: 80, maxWidth: 180)
+        .opacity(isBeingDragged ? 0.55 : 1.0)
+        .background(
+            Capsule()
+                .fill(isSelected
+                    ? .ultraThickMaterial
+                    : (isHovering ? .regularMaterial : .ultraThinMaterial))
+                .shadow(
+                    color: isSelected ? Color.black.opacity(0.08) : .clear,
+                    radius: 2, y: 1
+                )
+        )
+        .overlay {
+            Capsule()
+                .strokeBorder(
+                    isSelected
+                        ? Color.white.opacity(0.25)
+                        : Color.white.opacity(0.08),
+                    lineWidth: 0.5
+                )
+        }
+        .overlay {
+            TabMouseInteractionLayer(
+                tabId: tab.tabId,
+                onClick: onSelect,
+                onFrameChange: onFrameChange
+            )
+        }
+        .overlay(alignment: .trailing) {
             if isSelected || isHovering {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -139,37 +232,21 @@ struct GlassTabCapsule: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .padding(.trailing, 8)
                 .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .frame(minWidth: 80, maxWidth: 180)
-        .background(
-            Capsule()
-                .fill(isSelected
-                    ? .ultraThickMaterial
-                    : (isHovering ? .regularMaterial : .ultraThinMaterial))
-                .shadow(
-                    color: isSelected ? Color.black.opacity(0.08) : .clear,
-                    radius: 2, y: 1
-                )
-        )
-        .overlay(
-            Capsule()
-                .strokeBorder(
-                    isSelected
-                        ? Color.white.opacity(0.25)
-                        : Color.white.opacity(0.08),
-                    lineWidth: 0.5
-                )
-        )
         .contentShape(Capsule())
-        .onTapGesture(perform: onSelect)
+        .contextMenu {
+            Button("Move Tab to New Window", action: onDetach)
+        }
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovering = hovering
             }
+        }
+        .onDisappear {
+            onFrameChange(nil)
         }
     }
 }
@@ -193,10 +270,11 @@ struct TerminalContainerView: View {
 
 struct WindowTitleModifier: ViewModifier {
     @ObservedObject var tabManager: TabManager
+    @ObservedObject var windowContext: WorkspaceWindowContext
 
     func body(content: Content) -> some View {
         content
-            .onChange(of: tabManager.selectedTab?.title) { newTitle in
+            .onChange(of: tabManager.selectedTab(in: windowContext.workspaceId)?.title) { newTitle in
                 if let window = NSApp.mainWindow {
                     window.title = (newTitle ?? "").isEmpty ? "hello_tty" : (newTitle ?? "hello_tty")
                 }

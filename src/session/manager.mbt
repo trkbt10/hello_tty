@@ -1,9 +1,9 @@
 ///|
 /// SessionManager — manages multiple terminal sessions.
 ///
-/// This is the MoonBit SoT for tab/session lifecycle. Platform adapters
-/// (Swift TabManager, GTK tab bar) consume this — they do NOT decide
-/// shell paths, grid dimensions, or initialization sequences.
+/// This is the MoonBit SoT for session lifecycle. Tabs and panels are modeled
+/// one layer above this in LayoutManager. Platform adapters consume this — they
+/// do NOT decide shell paths, grid dimensions, or initialization sequences.
 ///
 /// Session creation is a single atomic operation:
 ///   create_session() → terminal init + PTY spawn + activate

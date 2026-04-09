@@ -15,6 +15,7 @@ class TerminalBaseView: NSView, NSTextInputClient {
             if let s = terminalState {
                 input = InputHandler(state: s)
                 input?.tabManager = tabManager
+                input?.workspaceId = workspaceId
                 searchController = TerminalSearchController(state: s, inputHandler: input!)
                 input?.onFindRequested = { [weak self] in
                     self?.showSearchBar()
@@ -27,6 +28,10 @@ class TerminalBaseView: NSView, NSTextInputClient {
     /// Set by the view hierarchy (TerminalView's NSViewRepresentable coordinator).
     weak var tabManager: TabManager? {
         didSet { input?.tabManager = tabManager }
+    }
+
+    var workspaceId: Int32? {
+        didSet { input?.workspaceId = workspaceId }
     }
 
     private(set) var input: InputHandler?

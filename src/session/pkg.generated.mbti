@@ -31,7 +31,7 @@ pub fn Session::handle_key(Self, Int, Int) -> String
 pub fn Session::is_alive(Self) -> Bool
 pub fn Session::mark_dead(Self) -> Unit
 pub fn Session::new(Int, Int, Int) -> Self
-pub fn Session::process_output(Self, String) -> Unit
+pub fn Session::process_output(Self, String) -> String
 pub fn Session::resize(Self, Int, Int) -> Unit
 pub fn Session::set_pty(Self, Int, Int) -> Unit
 

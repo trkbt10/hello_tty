@@ -124,15 +124,16 @@ pub fn ffi_init(rows_bytes : Bytes, cols_bytes : Bytes) -> Int {
 
 ///|
 /// Feed PTY output bytes into the active session's parser and terminal.
-/// Returns 0 on success.
-pub fn ffi_process_output(data : Bytes) -> Int {
+/// Returns reply data to write back to the PTY (DSR/DA responses), or empty bytes.
+pub fn ffi_process_output(data : Bytes) -> Bytes {
   match bridge_state.sessions.active_session() {
     Some(session) => {
       let s = bytes_to_string(data)
-      session.process_output(s)
-      0
+      let reply = session.process_output(s)
+      result_buf.result_bytes = @utf8.encode(reply)
+      result_buf.result_bytes
     }
-    _ => -1
+    _ => Bytes::new(0)
   }
 }
 
@@ -281,7 +282,11 @@ pub fn ffi_is_in_input_region(
   let col = bytes_to_int(col_bytes, -1)
   match bridge_state.sessions.get_session(session_id) {
     Some(session) =>
-      if session.get_terminal().is_in_input_region(row, col) { 1 } else { 0 }
+      if session.get_terminal().is_in_input_region(row, col) {
+        1
+      } else {
+        0
+      }
     None => 0
   }
 }
@@ -900,6 +905,115 @@ pub fn ffi_list_tabs() -> Bytes {
 }
 
 ///|
+/// Reorder a tab within the tab strip.
+pub fn ffi_reorder_tab(tab_id_bytes : Bytes, target_index_bytes : Bytes) -> Int {
+  let tab_id = bytes_to_int(tab_id_bytes, -1)
+  let target_index = bytes_to_int(target_index_bytes, 0)
+  if bridge_state.layout.reorder_tab(tab_id, target_index) {
+    0
+  } else {
+    -1
+  }
+}
+
+///|
+/// Activate a workspace/window by ID.
+pub fn ffi_activate_workspace(workspace_id_bytes : Bytes) -> Int {
+  let workspace_id = bytes_to_int(workspace_id_bytes, -1)
+  if bridge_state.layout.activate_workspace(workspace_id) {
+    0
+  } else {
+    -1
+  }
+}
+
+///|
+/// Detach a tab into a newly created workspace.
+/// Returns the new workspace id, or -1 on failure.
+pub fn ffi_detach_tab_to_new_workspace(tab_id_bytes : Bytes) -> Int {
+  let tab_id = bytes_to_int(tab_id_bytes, -1)
+  bridge_state.layout.detach_tab_to_new_workspace(tab_id)
+}
+
+///|
+/// Attach a tab into a target workspace at the requested index.
+pub fn ffi_attach_tab_to_workspace(
+  tab_id_bytes : Bytes,
+  workspace_id_bytes : Bytes,
+  target_index_bytes : Bytes,
+) -> Int {
+  let tab_id = bytes_to_int(tab_id_bytes, -1)
+  let workspace_id = bytes_to_int(workspace_id_bytes, -1)
+  let target_index = bytes_to_int(target_index_bytes, 0)
+  if bridge_state.layout.attach_tab_to_workspace(
+      tab_id, workspace_id, target_index,
+    ) {
+    0
+  } else {
+    -1
+  }
+}
+
+///|
+/// Merge a tab into the active tab by splitting the target panel.
+pub fn ffi_merge_tab_into_panel(
+  tab_id_bytes : Bytes,
+  target_panel_id_bytes : Bytes,
+  direction_bytes : Bytes,
+) -> Int {
+  let tab_id = bytes_to_int(tab_id_bytes, -1)
+  let target_panel_id = bytes_to_int(target_panel_id_bytes, -1)
+  let dir_int = bytes_to_int(direction_bytes, 0)
+  let direction : @layout.SplitDirection = if dir_int == 1 {
+    Horizontal
+  } else {
+    Vertical
+  }
+  if bridge_state.layout.merge_tab_into_panel(
+      tab_id, target_panel_id, direction,
+    ) {
+    0
+  } else {
+    -1
+  }
+}
+
+///|
+/// Return all workspaces/windows and their ordered tabs as JSON.
+pub fn ffi_get_workspace_snapshot() -> Bytes {
+  let snapshots = bridge_state.layout.list_workspaces()
+  let workspaces : Array[Json] = []
+  for workspace in snapshots {
+    let tabs : Array[Json] = []
+    for tab in workspace.tabs {
+      let tab_json : Map[String, Json] = {
+        "tab_id": tab.tab_id.to_json(),
+        "title": tab.title.to_json(),
+        "active": tab.active.to_json(),
+        "panel_count": tab.panel_count.to_json(),
+        "focused_panel_id": tab.focused_panel_id.to_json(),
+      }
+      tabs.push(tab_json.to_json())
+    }
+    let workspace_json : Map[String, Json] = {
+      "workspace_id": workspace.workspace_id.to_json(),
+      "active": workspace.active.to_json(),
+      "active_tab_id": workspace.active_tab_id.to_json(),
+      "tabs": tabs.to_json(),
+    }
+    workspaces.push(workspace_json.to_json())
+  }
+  let root : Map[String, Json] = {
+    "active_workspace_id": bridge_state.layout
+    .get_active_workspace_id()
+    .to_json(),
+    "workspaces": workspaces.to_json(),
+  }
+  result_buf.result_bytes = @utf8.encode(root.to_json().stringify())
+  result_buf.result_bytes
+}
+
+///|
 /// Split the specified panel in the given direction.
 /// direction: 0=Vertical (left/right), 1=Horizontal (top/bottom)
 /// Returns JSON: {"panel_id":N, "session_id":N, "fd":N, "existing_rows":N, "existing_cols":N}
@@ -1181,16 +1295,17 @@ pub fn ffi_notify_panel_resize(
 ///|
 /// Feed PTY output into a specific session (not just the active one).
 /// Used when multiple panels are visible simultaneously.
-pub fn ffi_process_output_for(session_id_bytes : Bytes, data : Bytes) -> Int {
+pub fn ffi_process_output_for(session_id_bytes : Bytes, data : Bytes) -> Bytes {
   let session_id = bytes_to_int(session_id_bytes, -1)
   match bridge_state.sessions.get_session(session_id) {
     Some(session) => {
       let s = bytes_to_string(data)
-      session.process_output(s)
+      let reply = session.process_output(s)
       bridge_state.layout.update_tab_title()
-      0
+      result_buf.result_bytes = @utf8.encode(reply)
+      result_buf.result_bytes
     }
-    None => -1
+    None => Bytes::new(0)
   }
 }
 

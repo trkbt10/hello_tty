@@ -11,7 +11,7 @@ class MoonBitBridge {
     // Function pointer typedefs matching hello_tty_core.h
     private typealias InitFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
     private typealias ShutdownFn = @convention(c) () -> Int32
-    private typealias ProcessOutputFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+    private typealias ProcessOutputFn = @convention(c) (UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
     private typealias HandleKeyFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
     private typealias GetGridFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
     private typealias GetCursorFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
@@ -46,6 +46,12 @@ class MoonBitBridge {
     private typealias NextTabFn = @convention(c) () -> Int32
     private typealias PrevTabFn = @convention(c) () -> Int32
     private typealias ListTabsFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
+    private typealias ReorderTabFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
+    private typealias ActivateWorkspaceFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+    private typealias DetachTabToNewWorkspaceFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
+    private typealias AttachTabToWorkspaceFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
+    private typealias MergeTabIntoPanelFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
+    private typealias GetWorkspaceSnapshotFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
     private typealias SplitPanelFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
     private typealias ClosePanelFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
     private typealias FocusPanelFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
@@ -56,7 +62,7 @@ class MoonBitBridge {
     private typealias GetFocusedPanelIdFn = @convention(c) () -> Int32
 
     // Session-targeted operations
-    private typealias ProcessOutputForFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
+    private typealias ProcessOutputForFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
     private typealias GetGridForFn = @convention(c) (UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
     private typealias HandleKeyForFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
     private typealias ResizeSessionFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
@@ -135,6 +141,12 @@ class MoonBitBridge {
     private var fnNextTab: NextTabFn?
     private var fnPrevTab: PrevTabFn?
     private var fnListTabs: ListTabsFn?
+    private var fnReorderTab: ReorderTabFn?
+    private var fnActivateWorkspace: ActivateWorkspaceFn?
+    private var fnDetachTabToNewWorkspace: DetachTabToNewWorkspaceFn?
+    private var fnAttachTabToWorkspace: AttachTabToWorkspaceFn?
+    private var fnMergeTabIntoPanel: MergeTabIntoPanelFn?
+    private var fnGetWorkspaceSnapshot: GetWorkspaceSnapshotFn?
     private var fnSplitPanel: SplitPanelFn?
     private var fnClosePanel: ClosePanelFn?
     private var fnFocusPanel: FocusPanelFn?
@@ -311,6 +323,12 @@ class MoonBitBridge {
         fnNextTab = sym("hello_tty_next_tab")
         fnPrevTab = sym("hello_tty_prev_tab")
         fnListTabs = sym("hello_tty_list_tabs")
+        fnReorderTab = sym("hello_tty_reorder_tab")
+        fnActivateWorkspace = sym("hello_tty_activate_workspace")
+        fnDetachTabToNewWorkspace = sym("hello_tty_detach_tab_to_new_workspace")
+        fnAttachTabToWorkspace = sym("hello_tty_attach_tab_to_workspace")
+        fnMergeTabIntoPanel = sym("hello_tty_merge_tab_into_panel")
+        fnGetWorkspaceSnapshot = sym("hello_tty_get_workspace_snapshot")
         fnSplitPanel = sym("hello_tty_split_panel")
         fnClosePanel = sym("hello_tty_close_panel")
         fnFocusPanel = sym("hello_tty_focus_panel")
@@ -391,9 +409,14 @@ class MoonBitBridge {
         _ = fnShutdown?()
     }
 
-    func processOutput(_ data: String) -> Bool {
-        guard let fn = fnProcessOutput else { return false }
-        return data.withCString { fn($0) } == 0
+    /// Process PTY output and return any reply data (DSR/DA responses) to write back.
+    func processOutput(_ data: String) -> String? {
+        guard let fn = fnProcessOutput else { return nil }
+        let resultPtr = data.withCString { fn($0) }
+        guard let ptr = resultPtr else { return nil }
+        defer { fnFreeString?(ptr) }
+        let reply = String(cString: ptr)
+        return reply.isEmpty ? nil : reply
     }
 
     func handleKey(keyCode: Int, modifiers: Int) -> String? {
@@ -718,6 +741,21 @@ class MoonBitBridge {
         let isActive: Bool
     }
 
+    struct WorkspaceTabInfo {
+        let tabId: Int32
+        let title: String
+        let isActive: Bool
+        let panelCount: Int
+        let focusedPanelId: Int32
+    }
+
+    struct WorkspaceInfo {
+        let workspaceId: Int32
+        let isActive: Bool
+        let activeTabId: Int32
+        let tabs: [WorkspaceTabInfo]
+    }
+
     /// List all tabs.
     func listTabs() -> [TabInfo] {
         guard let fn = fnListTabs else { return [] }
@@ -735,6 +773,88 @@ class MoonBitBridge {
                   let active = obj["active"] as? Bool
             else { return nil }
             return TabInfo(id: id, title: title, isActive: active)
+        }
+    }
+
+    /// Reorder a tab to the target tab-strip index.
+    func reorderTab(tabId: Int32, targetIndex: Int) -> Bool {
+        guard let fn = fnReorderTab else { return false }
+        let result = "\(tabId)".withCString { t in
+            "\(targetIndex)".withCString { i in fn(t, i) }
+        }
+        return result == 0
+    }
+
+    func activateWorkspace(workspaceId: Int32) -> Bool {
+        guard let fn = fnActivateWorkspace else { return false }
+        return "\(workspaceId)".withCString { fn($0) } == 0
+    }
+
+    func detachTabToNewWorkspace(tabId: Int32) -> Int32 {
+        guard let fn = fnDetachTabToNewWorkspace else { return -1 }
+        return "\(tabId)".withCString { fn($0) }
+    }
+
+    func attachTabToWorkspace(tabId: Int32, workspaceId: Int32, targetIndex: Int) -> Bool {
+        guard let fn = fnAttachTabToWorkspace else { return false }
+        let result = "\(tabId)".withCString { t in
+            "\(workspaceId)".withCString { w in
+                "\(targetIndex)".withCString { i in fn(t, w, i) }
+            }
+        }
+        return result == 0
+    }
+
+    func mergeTabIntoPanel(tabId: Int32, targetPanelId: Int32, direction: Int32) -> Bool {
+        guard let fn = fnMergeTabIntoPanel else { return false }
+        let result = "\(tabId)".withCString { t in
+            "\(targetPanelId)".withCString { p in
+                "\(direction)".withCString { d in fn(t, p, d) }
+            }
+        }
+        return result == 0
+    }
+
+    func getWorkspaceSnapshot() -> [WorkspaceInfo] {
+        guard let fn = fnGetWorkspaceSnapshot else { return [] }
+        guard let ptr = fn() else { return [] }
+        defer { fnFreeString?(ptr) }
+        let jsonStr = String(cString: ptr)
+
+        guard let data = jsonStr.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let workspaces = obj["workspaces"] as? [[String: Any]]
+        else { return [] }
+
+        return workspaces.compactMap { workspace in
+            guard let workspaceId = workspace["workspace_id"] as? Int,
+                  let active = workspace["active"] as? Bool,
+                  let activeTabId = workspace["active_tab_id"] as? Int,
+                  let tabs = workspace["tabs"] as? [[String: Any]]
+            else { return nil }
+
+            let parsedTabs = tabs.compactMap { tab -> WorkspaceTabInfo? in
+                guard let tabId = tab["tab_id"] as? Int,
+                      let title = tab["title"] as? String,
+                      let tabActive = tab["active"] as? Bool,
+                      let panelCount = tab["panel_count"] as? Int,
+                      let focusedPanelId = tab["focused_panel_id"] as? Int
+                else { return nil }
+                return WorkspaceTabInfo(
+                    tabId: Int32(tabId),
+                    title: title,
+                    isActive: tabActive,
+                    panelCount: panelCount,
+                    focusedPanelId: Int32(focusedPanelId)
+                )
+            }
+
+            return WorkspaceInfo(
+                workspaceId: Int32(workspaceId),
+                isActive: active,
+                activeTabId: Int32(activeTabId),
+                tabs: parsedTabs
+            )
         }
     }
 
@@ -840,13 +960,16 @@ class MoonBitBridge {
 
     // MARK: - Session-Targeted Operations
 
-    /// Feed PTY output into a specific session.
-    func processOutputFor(sessionId: Int32, data: String) -> Bool {
-        guard let fn = fnProcessOutputFor else { return false }
-        let result = "\(sessionId)".withCString { s in
+    /// Feed PTY output into a specific session. Returns reply data to write back to PTY.
+    func processOutputFor(sessionId: Int32, data: String) -> String? {
+        guard let fn = fnProcessOutputFor else { return nil }
+        let resultPtr = "\(sessionId)".withCString { s in
             data.withCString { d in fn(s, d) }
         }
-        return result == 0
+        guard let ptr = resultPtr else { return nil }
+        defer { fnFreeString?(ptr) }
+        let reply = String(cString: ptr)
+        return reply.isEmpty ? nil : reply
     }
 
     /// Get the grid of a specific session.

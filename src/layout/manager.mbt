@@ -12,8 +12,14 @@
 ///   - Platform adapters receive layout info via FFI and render accordingly
 pub struct LayoutManager {
   tabs : Map[Int, Tab]
+  workspaces : Map[Int, Array[Int]]
+  workspace_active_tabs : Map[Int, Int]
+  tab_workspace : Map[Int, Int]
+  mut workspace_order : Array[Int]
   sessions : @session.SessionManager
+  mut active_workspace_id : Int
   mut active_tab_id : Int
+  mut next_workspace_id : Int
   mut next_tab_id : Int
   mut next_panel_id : Int
   /// Divider size in grid cells (typically 1).
@@ -29,8 +35,14 @@ pub struct LayoutManager {
 pub fn LayoutManager::new(sessions : @session.SessionManager) -> LayoutManager {
   {
     tabs: {},
+    workspaces: {},
+    workspace_active_tabs: {},
+    tab_workspace: {},
+    workspace_order: [],
     sessions,
+    active_workspace_id: -1,
     active_tab_id: -1,
+    next_workspace_id: 1,
     next_tab_id: 1,
     next_panel_id: 1,
     divider_size: 1,
@@ -57,6 +69,7 @@ pub fn LayoutManager::create_tab(
   rows : Int,
   cols : Int,
 ) -> (Int, Int, Int) {
+  let workspace_id = self.ensure_active_workspace()
   let tab_id = self.next_tab_id
   self.next_tab_id += 1
   let panel_id = self.next_panel_id
@@ -71,6 +84,11 @@ pub fn LayoutManager::create_tab(
     title: "",
   }
   self.tabs[tab_id] = tab
+  let order = self.workspace_tab_order(workspace_id)
+  order.push(tab_id)
+  self.workspace_active_tabs[workspace_id] = tab_id
+  self.tab_workspace[tab_id] = workspace_id
+  self.active_workspace_id = workspace_id
   self.active_tab_id = tab_id
   // Keep SessionManager's active_id in sync
   self.sessions.switch_to(session_id) |> ignore
@@ -84,6 +102,12 @@ pub fn LayoutManager::create_tab(
 ///   - If other tabs exist, activates the nearest one
 ///   - If no tabs remain, active_tab_id becomes -1
 pub fn LayoutManager::close_tab(self : LayoutManager, tab_id : Int) -> Unit {
+  let workspace_id = match self.tab_workspace.get(tab_id) {
+    Some(id) => id
+    None => return
+  }
+  let order = self.workspace_tab_order(workspace_id)
+  let removed_index = order.search(tab_id)
   match self.tabs.get(tab_id) {
     Some(tab) => {
       // Destroy all sessions in this tab
@@ -92,26 +116,29 @@ pub fn LayoutManager::close_tab(self : LayoutManager, tab_id : Int) -> Unit {
         self.sessions.destroy_session(leaf.session_id)
       }
       self.tabs.remove(tab_id) |> ignore
-      // Activate another tab if possible
-      if self.active_tab_id == tab_id {
-        self.active_tab_id = -1
-        for k, _ in self.tabs {
-          // Pick the first available tab
-          if self.active_tab_id < 0 || k < self.active_tab_id {
-            self.active_tab_id = k
+      self.tab_workspace.remove(tab_id) |> ignore
+      let new_order = remove_tab_id(order, tab_id)
+      if new_order.is_empty() {
+        self.workspaces.remove(workspace_id) |> ignore
+        self.workspace_active_tabs.remove(workspace_id) |> ignore
+        self.workspace_order = remove_tab_id(self.workspace_order, workspace_id)
+        if self.active_workspace_id == workspace_id {
+          self.activate_fallback_workspace_after_close(workspace_id)
+        }
+      } else {
+        self.workspaces[workspace_id] = new_order
+        if self.workspace_active_tabs.get(workspace_id) == Some(tab_id) {
+          let next_tab_id = next_active_tab_id_after_close(
+            new_order, removed_index,
+          )
+          self.workspace_active_tabs[workspace_id] = next_tab_id
+          if self.active_workspace_id == workspace_id {
+            self.active_tab_id = next_tab_id
           }
         }
-        // Sync SessionManager focus
-        match self.active_tab() {
-          Some(active) => {
-            let focused = find_panel(active.layout, active.focused_panel_id)
-            match focused {
-              Some(info) => self.sessions.switch_to(info.session_id) |> ignore
-              None => ()
-            }
-          }
-          None => ()
-        }
+      }
+      if self.active_workspace_id == workspace_id {
+        self.sync_active_session()
       }
     }
     None => ()
@@ -121,17 +148,28 @@ pub fn LayoutManager::close_tab(self : LayoutManager, tab_id : Int) -> Unit {
 ///|
 /// Switch to a different tab by ID.
 pub fn LayoutManager::switch_tab(self : LayoutManager, tab_id : Int) -> Bool {
-  if self.tabs.contains(tab_id) {
-    self.active_tab_id = tab_id
-    // Sync SessionManager focus to this tab's focused panel
-    match self.active_tab() {
-      Some(tab) =>
-        match find_panel(tab.layout, tab.focused_panel_id) {
-          Some(info) => self.sessions.switch_to(info.session_id) |> ignore
-          None => ()
-        }
-      None => ()
+  match self.tab_workspace.get(tab_id) {
+    Some(workspace_id) => {
+      self.active_workspace_id = workspace_id
+      self.workspace_active_tabs[workspace_id] = tab_id
+      self.active_tab_id = tab_id
+      self.sync_active_session()
+      true
     }
+    None => false
+  }
+}
+
+///|
+/// Switch to a different workspace by ID.
+pub fn LayoutManager::activate_workspace(
+  self : LayoutManager,
+  workspace_id : Int,
+) -> Bool {
+  if self.workspaces.contains(workspace_id) {
+    self.active_workspace_id = workspace_id
+    self.active_tab_id = self.workspace_active_tab_id(workspace_id)
+    self.sync_active_session()
     true
   } else {
     false
@@ -139,9 +177,9 @@ pub fn LayoutManager::switch_tab(self : LayoutManager, tab_id : Int) -> Bool {
 }
 
 ///|
-/// Switch to the next tab (wraps around).
+/// Switch to the next tab (wraps around) inside the active workspace.
 pub fn LayoutManager::next_tab(self : LayoutManager) -> Bool {
-  let ids = self.sorted_tab_ids()
+  let ids = self.active_workspace_tab_order()
   if ids.length() <= 1 {
     return false
   }
@@ -156,9 +194,9 @@ pub fn LayoutManager::next_tab(self : LayoutManager) -> Bool {
 }
 
 ///|
-/// Switch to the previous tab (wraps around).
+/// Switch to the previous tab (wraps around) inside the active workspace.
 pub fn LayoutManager::prev_tab(self : LayoutManager) -> Bool {
-  let ids = self.sorted_tab_ids()
+  let ids = self.active_workspace_tab_order()
   if ids.length() <= 1 {
     return false
   }
@@ -173,37 +211,361 @@ pub fn LayoutManager::prev_tab(self : LayoutManager) -> Bool {
 }
 
 ///|
-fn LayoutManager::sorted_tab_ids(self : LayoutManager) -> Array[Int] {
-  let ids : Array[Int] = []
-  for k, _ in self.tabs {
-    ids.push(k)
-  }
-  ids.sort()
-  ids
-}
-
-///|
 /// Get the currently active tab.
 pub fn LayoutManager::active_tab(self : LayoutManager) -> Tab? {
   self.tabs.get(self.active_tab_id)
 }
 
 ///|
-/// List all tabs: (id, title, is_active).
+/// List all tabs in the active workspace: (id, title, is_active).
 pub fn LayoutManager::list_tabs(
   self : LayoutManager,
 ) -> Array[(Int, String, Bool)] {
   let result : Array[(Int, String, Bool)] = []
-  for id, tab in self.tabs {
-    result.push((id, tab.title, id == self.active_tab_id))
+  for id in self.active_workspace_tab_order() {
+    match self.tabs.get(id) {
+      Some(tab) => result.push((id, tab.title, id == self.active_tab_id))
+      None => ()
+    }
   }
-  result.sort_by(fn(a, b) { a.0.compare(b.0) })
   result
 }
 
 ///|
 pub fn LayoutManager::tab_count(self : LayoutManager) -> Int {
-  self.tabs.length()
+  self.active_workspace_tab_order().length()
+}
+
+///|
+pub fn LayoutManager::can_detach_tab_to_new_workspace(
+  self : LayoutManager,
+  tab_id : Int,
+) -> Bool {
+  match self.tab_workspace.get(tab_id) {
+    Some(workspace_id) => self.workspace_tab_order(workspace_id).length() > 1
+    None => false
+  }
+}
+
+///|
+/// Reorder a tab within its current workspace tab strip order.
+pub fn LayoutManager::reorder_tab(
+  self : LayoutManager,
+  tab_id : Int,
+  target_index : Int,
+) -> Bool {
+  let workspace_id = match self.tab_workspace.get(tab_id) {
+    Some(id) => id
+    None => return false
+  }
+  let current_order = self.workspace_tab_order(workspace_id)
+  let current_index = match current_order.search(tab_id) {
+    Some(index) => index
+    None => return false
+  }
+  let max_index = current_order.length() - 1
+  let clamped_target = target_index.clamp(min=0, max=max_index)
+  if current_index == clamped_target {
+    return true
+  }
+  let order_without = remove_tab_id(current_order, tab_id)
+  self.workspaces[workspace_id] = insert_tab_id(
+    order_without, tab_id, clamped_target,
+  )
+  true
+}
+
+///|
+/// Detach a tab into a newly created workspace.
+pub fn LayoutManager::detach_tab_to_new_workspace(
+  self : LayoutManager,
+  tab_id : Int,
+) -> Int {
+  if !self.can_detach_tab_to_new_workspace(tab_id) {
+    return -1
+  }
+  let source_workspace_id = match self.tab_workspace.get(tab_id) {
+    Some(id) => id
+    None => return -1
+  }
+  let source_order = self.workspace_tab_order(source_workspace_id)
+  let removed_index = source_order.search(tab_id)
+  let workspace_id = self.create_workspace()
+  self.workspaces[workspace_id] = [tab_id]
+  self.workspace_active_tabs[workspace_id] = tab_id
+  self.tab_workspace[tab_id] = workspace_id
+  self.active_workspace_id = workspace_id
+  self.active_tab_id = tab_id
+  let new_source_order = remove_tab_id(source_order, tab_id)
+  if new_source_order.is_empty() {
+    self.workspaces.remove(source_workspace_id) |> ignore
+    self.workspace_active_tabs.remove(source_workspace_id) |> ignore
+    self.workspace_order = remove_tab_id(
+      self.workspace_order,
+      source_workspace_id,
+    )
+  } else {
+    self.workspaces[source_workspace_id] = new_source_order
+    if self.workspace_active_tabs.get(source_workspace_id) == Some(tab_id) {
+      self.workspace_active_tabs[source_workspace_id] = next_active_tab_id_after_close(
+        new_source_order, removed_index,
+      )
+    }
+  }
+  self.sync_active_session()
+  workspace_id
+}
+
+///|
+/// Attach a tab into a target workspace at the requested index.
+pub fn LayoutManager::attach_tab_to_workspace(
+  self : LayoutManager,
+  tab_id : Int,
+  workspace_id : Int,
+  target_index : Int,
+) -> Bool {
+  if !self.workspaces.contains(workspace_id) {
+    return false
+  }
+  let source_workspace_id = match self.tab_workspace.get(tab_id) {
+    Some(id) => id
+    None => return false
+  }
+  if source_workspace_id == workspace_id {
+    return self.reorder_tab(tab_id, target_index)
+  }
+  let source_order = self.workspace_tab_order(source_workspace_id)
+  let removed_index = source_order.search(tab_id)
+  let new_source_order = remove_tab_id(source_order, tab_id)
+  if new_source_order.is_empty() {
+    self.workspaces.remove(source_workspace_id) |> ignore
+    self.workspace_active_tabs.remove(source_workspace_id) |> ignore
+    self.workspace_order = remove_tab_id(
+      self.workspace_order,
+      source_workspace_id,
+    )
+  } else {
+    self.workspaces[source_workspace_id] = new_source_order
+    if self.workspace_active_tabs.get(source_workspace_id) == Some(tab_id) {
+      self.workspace_active_tabs[source_workspace_id] = next_active_tab_id_after_close(
+        new_source_order, removed_index,
+      )
+    }
+  }
+  let target_order = self.workspace_tab_order(workspace_id)
+  self.workspaces[workspace_id] = insert_tab_id(
+    target_order, tab_id, target_index,
+  )
+  self.workspace_active_tabs[workspace_id] = tab_id
+  self.tab_workspace[tab_id] = workspace_id
+  self.active_workspace_id = workspace_id
+  self.active_tab_id = tab_id
+  self.sync_active_session()
+  true
+}
+
+///|
+/// Merge a dragged tab into the currently visible tab by splitting a target panel.
+///
+/// The dragged tab's entire panel layout becomes one side of the new split.
+/// This is the MoonBit SoT for "drop tab on panel to split".
+pub fn LayoutManager::merge_tab_into_panel(
+  self : LayoutManager,
+  tab_id : Int,
+  target_panel_id : Int,
+  direction : SplitDirection,
+) -> Bool {
+  let source_workspace_id = match self.tab_workspace.get(tab_id) {
+    Some(id) => id
+    None => return false
+  }
+  let source_tab = match self.tabs.get(tab_id) {
+    Some(tab) => tab
+    None => return false
+  }
+  let target_tab = match self.active_tab() {
+    Some(tab) => tab
+    None => return false
+  }
+  if target_tab.id == tab_id {
+    return false
+  }
+  let target_workspace_id = match self.tab_workspace.get(target_tab.id) {
+    Some(id) => id
+    None => return false
+  }
+  let target_panel = match find_panel(target_tab.layout, target_panel_id) {
+    Some(panel) => panel
+    None => return false
+  }
+  let ratio : Float = 0.5
+  if !can_split(
+      target_panel.rows,
+      target_panel.cols,
+      direction,
+      ratio,
+      self.divider_size,
+    ) {
+    return false
+  }
+  let source_layout = source_tab.layout
+  let source_focused_panel_id = source_tab.focused_panel_id
+  let replacement = Split(direction, Leaf(target_panel), source_layout, ratio)
+  let new_root = match
+    replace_leaf(target_tab.layout, target_panel_id, replacement) {
+    Some(root) => root
+    None => return false
+  }
+  target_tab.layout = new_root
+  target_tab.focused_panel_id = source_focused_panel_id
+  resize_tree(
+    new_root,
+    self.last_total_rows,
+    self.last_total_cols,
+    self.divider_size,
+  )
+  self.sync_session_sizes(target_tab)
+  self.tabs.remove(tab_id) |> ignore
+  self.tab_workspace.remove(tab_id) |> ignore
+  let source_order = self.workspace_tab_order(source_workspace_id)
+  let removed_index = source_order.search(tab_id)
+  let new_source_order = remove_tab_id(source_order, tab_id)
+  if new_source_order.is_empty() {
+    self.workspaces.remove(source_workspace_id) |> ignore
+    self.workspace_active_tabs.remove(source_workspace_id) |> ignore
+    self.workspace_order = remove_tab_id(
+      self.workspace_order,
+      source_workspace_id,
+    )
+  } else {
+    self.workspaces[source_workspace_id] = new_source_order
+    if self.workspace_active_tabs.get(source_workspace_id) == Some(tab_id) {
+      let replacement_tab_id = if source_workspace_id == target_workspace_id {
+        target_tab.id
+      } else {
+        next_active_tab_id_after_close(new_source_order, removed_index)
+      }
+      self.workspace_active_tabs[source_workspace_id] = replacement_tab_id
+    }
+  }
+  self.active_workspace_id = target_workspace_id
+  self.workspace_active_tabs[target_workspace_id] = target_tab.id
+  self.active_tab_id = target_tab.id
+  self.sync_active_session()
+  true
+}
+
+///|
+pub fn LayoutManager::list_workspaces(
+  self : LayoutManager,
+) -> Array[WorkspaceSnapshot] {
+  let result : Array[WorkspaceSnapshot] = []
+  for workspace_id in self.workspace_order {
+    let tabs : Array[WorkspaceTabSnapshot] = []
+    let active_tab_id = self.workspace_active_tab_id(workspace_id)
+    for tab_id in self.workspace_tab_order(workspace_id) {
+      match self.tabs.get(tab_id) {
+        Some(tab) =>
+          tabs.push(WorkspaceTabSnapshot::{
+            tab_id,
+            title: tab.title,
+            active: tab_id == active_tab_id,
+            panel_count: count_leaves(tab.layout),
+            focused_panel_id: tab.focused_panel_id,
+          })
+        None => ()
+      }
+    }
+    result.push(WorkspaceSnapshot::{
+      workspace_id,
+      active: workspace_id == self.active_workspace_id,
+      active_tab_id,
+      tabs,
+    })
+  }
+  result
+}
+
+///|
+pub fn LayoutManager::get_active_workspace_id(self : LayoutManager) -> Int {
+  self.active_workspace_id
+}
+
+///|
+fn LayoutManager::ensure_active_workspace(self : LayoutManager) -> Int {
+  if self.active_workspace_id >= 0 &&
+    self.workspaces.contains(self.active_workspace_id) {
+    self.active_workspace_id
+  } else {
+    self.create_workspace()
+  }
+}
+
+///|
+fn LayoutManager::create_workspace(self : LayoutManager) -> Int {
+  let workspace_id = self.next_workspace_id
+  self.next_workspace_id += 1
+  self.workspaces[workspace_id] = []
+  self.workspace_active_tabs[workspace_id] = -1
+  self.workspace_order.push(workspace_id)
+  self.active_workspace_id = workspace_id
+  workspace_id
+}
+
+///|
+fn LayoutManager::workspace_tab_order(
+  self : LayoutManager,
+  workspace_id : Int,
+) -> Array[Int] {
+  match self.workspaces.get(workspace_id) {
+    Some(order) => order
+    None => []
+  }
+}
+
+///|
+fn LayoutManager::active_workspace_tab_order(
+  self : LayoutManager,
+) -> Array[Int] {
+  self.workspace_tab_order(self.active_workspace_id)
+}
+
+///|
+fn LayoutManager::workspace_active_tab_id(
+  self : LayoutManager,
+  workspace_id : Int,
+) -> Int {
+  match self.workspace_active_tabs.get(workspace_id) {
+    Some(tab_id) => tab_id
+    None => -1
+  }
+}
+
+///|
+fn LayoutManager::activate_fallback_workspace_after_close(
+  self : LayoutManager,
+  _closed_workspace_id : Int,
+) -> Unit {
+  if self.workspace_order.is_empty() {
+    self.active_workspace_id = -1
+    self.active_tab_id = -1
+  } else {
+    let fallback_workspace_id = self.workspace_order[0]
+    self.active_workspace_id = fallback_workspace_id
+    self.active_tab_id = self.workspace_active_tab_id(fallback_workspace_id)
+  }
+}
+
+///|
+fn LayoutManager::sync_active_session(self : LayoutManager) -> Unit {
+  match self.active_tab() {
+    Some(tab) =>
+      match find_panel(tab.layout, tab.focused_panel_id) {
+        Some(info) => self.sessions.switch_to(info.session_id) |> ignore
+        None => ()
+      }
+    None => ()
+  }
 }
 
 // ========== Panel Operations ==========
@@ -620,6 +982,63 @@ fn set_ratio_for_panel(
 /// Destroy all tabs and sessions.
 pub fn LayoutManager::destroy_all(self : LayoutManager) -> Unit {
   self.tabs.clear()
+  self.workspaces.clear()
+  self.workspace_active_tabs.clear()
+  self.tab_workspace.clear()
+  self.workspace_order.clear()
+  self.active_workspace_id = -1
   self.active_tab_id = -1
   self.sessions.destroy_all()
+}
+
+///|
+fn remove_tab_id(order : Array[Int], tab_id : Int) -> Array[Int] {
+  let result : Array[Int] = []
+  for id in order {
+    if id != tab_id {
+      result.push(id)
+    }
+  }
+  result
+}
+
+///|
+fn insert_tab_id(
+  order : Array[Int],
+  tab_id : Int,
+  target_index : Int,
+) -> Array[Int] {
+  let result : Array[Int] = []
+  let mut inserted = false
+  let clamped_target = target_index.clamp(min=0, max=order.length())
+  let mut index = 0
+  for id in order {
+    if !inserted && index == clamped_target {
+      result.push(tab_id)
+      inserted = true
+    }
+    result.push(id)
+    index += 1
+  }
+  if !inserted {
+    result.push(tab_id)
+  }
+  result
+}
+
+///|
+fn next_active_tab_id_after_close(
+  order : Array[Int],
+  removed_index : Int?,
+) -> Int {
+  if order.is_empty() {
+    return -1
+  }
+  match removed_index {
+    Some(index) => {
+      let fallback_index = index.clamp(min=0, max=order.length() - 1)
+      order[fallback_index]
+    }
+    None => order[0]
+  }
 }

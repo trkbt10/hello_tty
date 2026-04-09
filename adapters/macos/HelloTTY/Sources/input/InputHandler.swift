@@ -19,6 +19,7 @@ class InputHandler {
     weak var state: TerminalState?
     /// TabManager for panel/tab operations. Set by the view hierarchy.
     weak var tabManager: TabManager?
+    var workspaceId: Int32?
 
     // Stash the current event for doCommand(by:) which only receives a selector
     var currentEvent: NSEvent?
@@ -105,44 +106,58 @@ class InputHandler {
 
         // ---- Split operations ----
         case .splitRight:
-            tabManager?.splitFocusedPanel(direction: 0) // vertical
+            if let workspaceId {
+                tabManager?.splitFocusedPanel(in: workspaceId, direction: 0)
+            }
             return true
 
         case .splitDown:
-            tabManager?.splitFocusedPanel(direction: 1) // horizontal
+            if let workspaceId {
+                tabManager?.splitFocusedPanel(in: workspaceId, direction: 1)
+            }
             return true
 
         case .nextSplit:
-            tabManager?.focusNextSplit()
+            if let workspaceId {
+                tabManager?.focusNextSplit(in: workspaceId)
+            }
             return true
 
         case .prevSplit:
-            tabManager?.focusPrevSplit()
+            if let workspaceId {
+                tabManager?.focusPrevSplit(in: workspaceId)
+            }
             return true
 
         case .focusDirection(let dir):
-            tabManager?.focusDirection(dir)
+            if let workspaceId {
+                tabManager?.focusDirection(in: workspaceId, dir)
+            }
             return true
 
         // ---- Tab operations ----
         case .newTab:
-            tabManager?.newTab()
+            _ = tabManager?.newTab(in: workspaceId)
             return true
 
         case .closePanel:
-            tabManager?.closeFocusedPanel()
+            if let workspaceId {
+                tabManager?.closeFocusedPanel(in: workspaceId)
+            }
             return true
 
         case .nextTab:
-            tabManager?.nextTab()
+            tabManager?.nextTab(in: workspaceId)
             return true
 
         case .prevTab:
-            tabManager?.prevTab()
+            tabManager?.prevTab(in: workspaceId)
             return true
 
         case .gotoTab(let index):
-            tabManager?.gotoTab(index)
+            if let workspaceId {
+                tabManager?.gotoTab(in: workspaceId, index)
+            }
             return true
         }
     }
