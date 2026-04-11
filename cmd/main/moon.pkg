@@ -1,18 +1,8 @@
 import {
-  "trkbt10/hello_tty/src/app/ffi" @spawn_ffi,
-  "trkbt10/hello_tty/src/config" @config,
-  "trkbt10/hello_tty/src/font" @font,
-  "trkbt10/hello_tty/src/input" @input,
+  "trkbt10/hello_tty/adapters/linux" @linux,
   "trkbt10/hello_tty/src/layout" @layout,
   "trkbt10/hello_tty/src/platform" @platform,
-  "trkbt10/hello_tty/src/pty/ffi" @pty_ffi,
-  "trkbt10/hello_tty/src/renderer" @renderer,
   "trkbt10/hello_tty/src/session" @session,
-  "trkbt10/hello_tty/src/terminal" @terminal,
-  "trkbt10/hello_tty/src/theme" @theme,
-  "moonbitlang/core/encoding/utf8" @utf8,
-  "moonbitlang/x/fs" @fs,
-  "moonbitlang/x/sys" @sys,
 }
 
 options(
