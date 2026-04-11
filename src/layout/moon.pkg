@@ -7,5 +7,6 @@ options(
     "manager.mbt": [ "native" ],
     "tree.mbt": [ "native" ],
     "types.mbt": [ "native" ],
+    "integration_test.mbt": [ "native" ],
   },
 )

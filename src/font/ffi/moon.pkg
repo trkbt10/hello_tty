@@ -4,5 +4,11 @@ options(
     "c_stub/linux/font_freetype.c",
     "c_stub/stub/font_stub.c",
   ],
+  link: {
+    "native": {
+      "stub-cc-flags": "-I/usr/include/freetype2",
+      "cc-flags": "-lfreetype",
+    },
+  },
   targets: { "ffi.mbt": [ "native" ] },
 )

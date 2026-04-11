@@ -1,7 +1,18 @@
 options(
   "native-stub": [
     "c_stub/stub/platform_stub.c",
-    "c_stub/macos/platform_macos.m",
+    "c_stub/macos/platform_macos_bridge.c",
+    "c_stub/linux/platform_linux.c",
+    "c_stub/linux/platform_x11.c",
+    "c_stub/linux/platform_wayland.c",
+    "c_stub/linux/protocols/xdg-shell-protocol.c",
+    "c_stub/linux/protocols/xdg-decoration-protocol.c",
+    "c_stub/linux/protocols/text-input-unstable-v3-protocol.c",
   ],
+  link: {
+    "native": {
+      "cc-flags": "-lX11 -lwayland-client -lxkbcommon",
+    },
+  },
   targets: { "ffi.mbt": [ "native" ] },
 )

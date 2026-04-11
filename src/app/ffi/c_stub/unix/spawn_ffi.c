@@ -5,6 +5,7 @@
 
 #ifndef _WIN32
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -95,6 +96,13 @@ int hello_tty_waitpid_nonblock(int pid) {
 // Send SIGTERM to a child process.
 void hello_tty_kill(int pid) {
     kill((pid_t)pid, SIGTERM);
+}
+
+// Debug: write a message to stderr (unbuffered).
+// Used by MoonBit main to diagnose windowed mode issues.
+void hello_tty_debug_log(const uint8_t *msg, int msg_len) {
+    write(STDERR_FILENO, msg, (size_t)msg_len);
+    write(STDERR_FILENO, "\n", 1);
 }
 
 #endif // _WIN32

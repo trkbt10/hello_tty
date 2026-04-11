@@ -1,6 +1,6 @@
 ///|
 /// Application configuration.
-pub struct AppConfig {
+pub(all) struct AppConfig {
   /// Initial terminal rows.
   rows : Int
   /// Initial terminal columns.

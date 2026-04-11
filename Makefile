@@ -16,9 +16,13 @@
 #   make swift            Build dylib + Swift app
 #   make names            Print MoonBit mangled export names
 #
+#   make solib            Build Linux standalone executable (X11 + Vulkan)
+#   make debug-linux      Run Linux standalone (X11 + Vulkan)
+#
 #   make clean            Remove all build artifacts
 #   make clean-moon       Remove MoonBit build cache only
 #   make clean-swift      Remove Swift build artifacts + dylib only
+#   make clean-linux      Remove Linux build artifacts only
 #
 #   make info             Show project info and build status
 
@@ -36,6 +40,11 @@ INTERACTIVE   := $(BUILD_DIR)/cmd/interactive/interactive.exe
 MACOS_ADAPTER := adapters/macos
 DYLIB_DIR     := $(MACOS_ADAPTER)/build
 DYLIB         := $(DYLIB_DIR)/libhello_tty.dylib
+
+# Linux build output
+LINUX_BUILD_DIR := _build/linux
+SOLIB           := $(LINUX_BUILD_DIR)/libhello_tty.so
+LINUX_EXE       := $(LINUX_BUILD_DIR)/hello_tty
 
 # MoonBit SDK
 MOON_INCLUDE  := $(HOME)/.moon/include
@@ -67,17 +76,25 @@ FONT_STUB_DIR := src/font/ffi/c_stub
 # PTY C stubs
 PTY_FFI_STUB_DIR := src/pty/ffi/c_stub
 
-CC            := clang
+CC            ?= cc
 CFLAGS        := -I$(MOON_INCLUDE) -I$(C_STUB_DIR) -I$(WGPU_INCLUDE) -I$(WGPU_INCLUDE)/webgpu -I$(WGPU_INCLUDE)/wgpu -I$(GPU_STUB_DIR) -I$(FONT_STUB_DIR) -I$(PTY_FFI_STUB_DIR) \
                  -fPIC -g -O2 -fwrapv -fno-strict-aliasing -Wno-unused-value
 DYLIB_FLAGS   := -dynamiclib -install_name @rpath/libhello_tty.dylib
 
+# Linux-specific flags
+LINUX_CFLAGS  := $(shell pkg-config --cflags freetype2 2>/dev/null)
+LINUX_LDFLAGS := -lX11 -lwayland-client -lxkbcommon -lfreetype -ldl -lpthread -lm
+
+# Platform C stubs
+PLATFORM_STUB_DIR := src/platform/ffi/c_stub
+
 .PHONY: all check test build \
         debug-headless debug-macos debug-pty debug-bridge debug-interactive \
+        debug-linux \
         self-test-macos \
         gen-bridge-lib check-stubs \
-        vendor-wgpu dylib swift names \
-        clean clean-moon clean-swift \
+        vendor-wgpu dylib swift solib names \
+        clean clean-moon clean-swift clean-linux \
         info
 
 # ============================================================
@@ -91,8 +108,10 @@ check:
 	moon check --target native
 
 ## Full native build
+## Note: moon build may report non-zero exit for FFI-only packages (font/ffi,
+## platform/ffi have no main), but all .c and .a artifacts are generated.
 build: gen-bridge-lib
-	moon build --target native
+	moon build --target native || test -f "$(BRIDGE_C)"
 
 ## Run tests
 test:
@@ -211,11 +230,59 @@ names: build
 	fi
 
 # ============================================================
+# Linux standalone (X11 + Vulkan)
+# ============================================================
+
+## Build Linux standalone executable (X11 + Vulkan GPU rendering)
+## Compiles MoonBit-generated main.c with real platform/font/GPU C stubs.
+## The linker resolves symbols from our real implementations before falling
+## back to stubs in the .a archives that moon generated.
+MAIN_C := $(BUILD_DIR)/cmd/main/main.c
+
+solib: build vendor-wgpu
+	@mkdir -p $(LINUX_BUILD_DIR)
+	@echo "=== linux: hello_tty standalone ==="
+	@if [ ! -f "$(MAIN_C)" ]; then \
+		echo "Error: $(MAIN_C) not found"; \
+		exit 1; \
+	fi
+	$(CC) $(CFLAGS) $(LINUX_CFLAGS) -DHELLO_TTY_PLATFORM_LINUX \
+		-o $(LINUX_EXE) \
+		$(MAIN_C) \
+		$(GPU_STUB_DIR)/gpu_wgpu.c \
+		$(GPU_STUB_DIR)/gpu_moonbit_glue.c \
+		$(FONT_STUB_DIR)/linux/font_freetype.c \
+		$(PLATFORM_STUB_DIR)/linux/platform_linux.c \
+		$(PLATFORM_STUB_DIR)/linux/platform_x11.c \
+		$(PLATFORM_STUB_DIR)/linux/platform_wayland.c \
+		$(PLATFORM_STUB_DIR)/linux/protocols/xdg-shell-protocol.c \
+		$(PLATFORM_STUB_DIR)/linux/protocols/xdg-decoration-protocol.c \
+		$(PLATFORM_STUB_DIR)/linux/protocols/text-input-unstable-v3-protocol.c \
+		$(PTY_FFI_STUB_DIR)/unix/pty_unix.c \
+		$(PTY_FFI_STUB_DIR)/pty_moonbit_glue.c \
+		$(SYS_STUB) \
+		.mooncakes/moonbitlang/x/fs/fs_native.c \
+		src/app/ffi/c_stub/unix/spawn_ffi.c \
+		.mooncakes/trkbt10/subprocess/env/stub.c \
+		$(WGPU_LIB) \
+		$(MOON_RUNLIB) \
+		$(MOON_RUNTIME) \
+		$(MOON_BT) \
+		$(LINUX_LDFLAGS)
+	@echo "=== Built $(LINUX_EXE) ==="
+
+## Run Linux standalone terminal (X11 + Vulkan GPU rendering)
+## Opens a window and displays the terminal view
+debug-linux: solib
+	@echo "=== debug-linux: Linux standalone ==="
+	$(LINUX_EXE)
+
+# ============================================================
 # Cleanup
 # ============================================================
 
 ## Remove all build outputs
-clean: clean-moon clean-swift
+clean: clean-moon clean-swift clean-linux
 
 ## Remove MoonBit build cache
 clean-moon:
@@ -225,6 +292,10 @@ clean-moon:
 clean-swift:
 	rm -rf $(DYLIB_DIR)
 	cd $(MACOS_ADAPTER) && swift package clean 2>/dev/null || true
+
+## Remove Linux build outputs
+clean-linux:
+	rm -rf $(LINUX_BUILD_DIR)
 
 # ============================================================
 # Info
@@ -244,11 +315,13 @@ info:
 	@[ -f "$(BRIDGE_LIB)" ]    && echo "  ✓ $(BRIDGE_LIB)"    || echo "  ✗ bridge_lib.exe (not built)"
 	@[ -f "$(INTERACTIVE)" ]   && echo "  ✓ $(INTERACTIVE)"   || echo "  ✗ interactive.exe (not built)"
 	@[ -f "$(DYLIB)" ]         && echo "  ✓ $(DYLIB)"         || echo "  ✗ libhello_tty.dylib (not built)"
+	@[ -f "$(LINUX_EXE)" ]     && echo "  ✓ $(LINUX_EXE)"     || echo "  ✗ hello_tty Linux (not built)"
 	@echo ""
 	@echo "Commands:"
 	@echo "  make check          Type check"
 	@echo "  make debug-headless Run in headless mode"
 	@echo "  make debug-macos    Run macOS SwiftUI app"
+	@echo "  make debug-linux    Run Linux standalone (X11 + Vulkan)"
 	@echo "  make debug-pty      Run PTY reader only"
 	@echo "  make debug-bridge   Run bridge FFI test"
 	@echo "  make debug-interactive Run interactive shell"

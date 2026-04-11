@@ -128,8 +128,8 @@ pub fn GpuBackend::execute_frame_on(
   for i in 0..<commands.length() {
     match commands[i] {
       Clear(_) => ()
-      DrawCells(cells) => self.draw_cell_quads(surface_id, cells)
-      DrawCursor(cursor) => self.draw_cursor_quad(surface_id, cursor)
+      DrawCells(cells) => self.draw_cell_quads_on(surface_id, cells)
+      DrawCursor(cursor) => self.draw_cursor_quad_on(surface_id, cursor)
       Present => ()
     }
   }
@@ -195,7 +195,9 @@ pub fn GpuBackend::resize(
 
 ///|
 /// Build and submit vertex data for cell quads on a specific surface.
-fn GpuBackend::draw_cell_quads(
+/// Public for multi-panel viewport rendering where the caller manages
+/// frame begin/end and viewport setup.
+pub fn GpuBackend::draw_cell_quads_on(
   self : GpuBackend,
   surface_id : Int,
   cells : Array[CellQuad],
@@ -407,7 +409,7 @@ fn emit_quad(
 
 ///|
 /// Draw the cursor as a colored quad on a specific surface.
-fn GpuBackend::draw_cursor_quad(
+pub fn GpuBackend::draw_cursor_quad_on(
   self : GpuBackend,
   surface_id : Int,
   cursor : CursorQuad,
@@ -437,6 +439,42 @@ fn GpuBackend::draw_cursor_quad(
     cursor.color.a,
     style_int,
   )
+}
+
+///|
+/// Begin a frame on a specific surface (for multi-panel rendering).
+/// The caller manages viewport setup and draw calls between begin/end.
+pub fn GpuBackend::frame_begin(
+  _self : GpuBackend,
+  surface_id : Int,
+  clear_color : @theme.RgbaColor,
+) -> Bool {
+  @ffi.gpu_frame_clear(
+    surface_id, clear_color.r, clear_color.g, clear_color.b, clear_color.a,
+  )
+  @ffi.gpu_frame_begin(surface_id) == 0
+}
+
+///|
+/// Set the viewport for sub-region rendering within a frame.
+pub fn GpuBackend::set_viewport(
+  _self : GpuBackend,
+  surface_id : Int,
+  x : Int,
+  y : Int,
+  width : Int,
+  height : Int,
+) -> Unit {
+  @ffi.gpu_set_viewport(surface_id, x, y, width, height)
+}
+
+///|
+/// End a frame and present.
+pub fn GpuBackend::frame_end(
+  _self : GpuBackend,
+  surface_id : Int,
+) -> Bool {
+  @ffi.gpu_frame_end(surface_id) == 0
 }
 
 ///|

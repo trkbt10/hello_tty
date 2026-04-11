@@ -5,5 +5,10 @@ import {
 
 options(
   "is-main": true,
+  link: {
+    "native": {
+      "cc-flags": "-lfreetype -lutil",
+    },
+  },
   targets: { "main.mbt": [ "native" ] },
 )

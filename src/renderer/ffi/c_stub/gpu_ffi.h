@@ -81,6 +81,11 @@ void hello_tty_gpu_draw_cursor(int surface_id,
     uint8_t r, uint8_t g, uint8_t b, uint8_t a,
     int style);
 
+// Set viewport and scissor rect for sub-region rendering (multi-panel).
+// Coordinates are in pixels relative to the surface.
+// Also updates the uniform buffer for the vertex shader.
+void hello_tty_gpu_set_viewport(int surface_id, int x, int y, int w, int h);
+
 // End the frame on a surface and present. Submits command buffer and presents swapchain image.
 // Returns 0 on success, -1 if swapchain needs recreation.
 int hello_tty_gpu_frame_end(int surface_id);

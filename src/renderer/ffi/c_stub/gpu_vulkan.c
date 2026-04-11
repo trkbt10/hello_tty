@@ -20,17 +20,13 @@
 #include <stdio.h>
 
 // Check for Vulkan SDK availability.
-// Set HELLO_TTY_HAS_VULKAN=1 to enable, or it auto-detects via __has_include.
+// Set HELLO_TTY_HAS_VULKAN=1 to enable.
+// NOTE: Auto-detection is disabled because the raw Vulkan backend has stale
+// function signatures (pre-multi-surface API). The wgpu backend (gpu_wgpu.c)
+// is the primary GPU backend and is compiled via the Makefile.
+// This file provides stub implementations for moon build.
 #ifndef HELLO_TTY_HAS_VULKAN
-#  if defined(__has_include)
-#    if __has_include(<vulkan/vulkan.h>)
-#      define HELLO_TTY_HAS_VULKAN 1
-#    else
-#      define HELLO_TTY_HAS_VULKAN 0
-#    endif
-#  else
-#    define HELLO_TTY_HAS_VULKAN 0
-#  endif
+#  define HELLO_TTY_HAS_VULKAN 0
 #endif
 
 #if HELLO_TTY_HAS_VULKAN
@@ -1157,6 +1153,9 @@ void hello_tty_gpu_draw_cursor(int id, float x, float y, float w, float h,
     (void)r; (void)g; (void)b; (void)a; (void)style;
 }
 int hello_tty_gpu_frame_end(int id) { (void)id; return -1; }
+void hello_tty_gpu_set_viewport(int id, int x, int y, int w, int h) {
+    (void)id; (void)x; (void)y; (void)w; (void)h;
+}
 
 // Legacy wrappers
 int hello_tty_gpu_init(uint64_t surface_handle, int width, int height) {

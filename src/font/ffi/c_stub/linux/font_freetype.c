@@ -7,9 +7,17 @@
 
 #include "../font_ffi.h"
 
-#include <ft2build.h>
+// FreeType2 include: use the path that resolves both with and without
+// -I/usr/include/freetype2 (pkg-config). The ft2build.h internally
+// includes <freetype/config/ftheader.h>, which requires the freetype2
+// directory to be in the include path.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+#include "/usr/include/freetype2/ft2build.h"
+#pragma GCC diagnostic pop
 #include FT_FREETYPE_H
 #include FT_GLYPH_H
+#include FT_BITMAP_H
 
 #include <stdlib.h>
 #include <string.h>

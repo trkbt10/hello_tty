@@ -66,6 +66,19 @@ pub extern "C" fn gpu_frame_clear(
 pub extern "C" fn gpu_frame_begin(surface_id : Int) -> Int = "hello_tty_gpu_frame_begin"
 
 ///|
+/// Set viewport and scissor rect for sub-region rendering (multi-panel).
+/// Coordinates are in pixels relative to the surface.
+/// Also updates the uniform buffer so the vertex shader maps positions
+/// relative to the panel's own coordinate space.
+pub extern "C" fn gpu_set_viewport(
+  surface_id : Int,
+  x : Int,
+  y : Int,
+  width : Int,
+  height : Int,
+) = "hello_tty_gpu_set_viewport"
+
+///|
 /// Upload cell quad vertex data and draw on a surface.
 #borrow(vertices)
 pub extern "C" fn gpu_draw_cells(

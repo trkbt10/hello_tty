@@ -399,6 +399,32 @@ int hello_tty_gpu_surface_create(uint64_t surface_handle, int width, int height)
         };
         WGPUSurfaceDescriptor sd = { .nextInChain = &metal.chain };
         s->surface = wgpuInstanceCreateSurface(g.instance, &sd);
+#elif defined(__linux__)
+        // Runtime X11/Wayland detection via platform dispatcher
+        extern void* hello_tty_platform_get_display(void);
+        extern int hello_tty_platform_get_backend_type(void);
+        void *display = hello_tty_platform_get_display();
+        int backend = hello_tty_platform_get_backend_type();
+
+        if (display && backend == 1) {
+            // Wayland: surface_handle is wl_surface*, display is wl_display*
+            WGPUSurfaceDescriptorFromWaylandSurface wayland = {
+                .chain = { .sType = WGPUSType_SurfaceDescriptorFromWaylandSurface },
+                .display = display,
+                .surface = (void *)(uintptr_t)surface_handle,
+            };
+            WGPUSurfaceDescriptor sd = { .nextInChain = &wayland.chain };
+            s->surface = wgpuInstanceCreateSurface(g.instance, &sd);
+        } else if (display) {
+            // X11: surface_handle is X11 Window, display is X11 Display*
+            WGPUSurfaceDescriptorFromXlibWindow xlib = {
+                .chain = { .sType = WGPUSType_SurfaceDescriptorFromXlibWindow },
+                .display = display,
+                .window = (uint64_t)surface_handle,
+            };
+            WGPUSurfaceDescriptor sd = { .nextInChain = &xlib.chain };
+            s->surface = wgpuInstanceCreateSurface(g.instance, &sd);
+        }
 #endif
         if (!s->surface) { s->active = 0; return -1; }
         configure_surface(s);
@@ -514,6 +540,23 @@ int hello_tty_gpu_frame_begin(int surface_id) {
     WGPURenderPassDescriptor rpd = { .colorAttachmentCount = 1, .colorAttachments = &ca };
     s->render_pass = wgpuCommandEncoderBeginRenderPass(s->encoder, &rpd);
     return 0;
+}
+
+// Set viewport + scissor rect for sub-region rendering (multi-panel).
+// Also updates the uniform buffer so the vertex shader maps positions
+// relative to the panel's own coordinate space (0,0 = panel top-left).
+void hello_tty_gpu_set_viewport(int surface_id,
+                                 int x, int y, int w, int h) {
+    Surf *s = get_surf(surface_id);
+    if (!s || !s->render_pass) return;
+    wgpuRenderPassEncoderSetViewport(s->render_pass,
+        (float)x, (float)y, (float)w, (float)h, 0.0f, 1.0f);
+    wgpuRenderPassEncoderSetScissorRect(s->render_pass,
+        (uint32_t)x, (uint32_t)y, (uint32_t)w, (uint32_t)h);
+    // Update uniform buffer with panel dimensions so the vertex shader
+    // maps pixel coordinates (0..w, 0..h) to this viewport correctly.
+    float vp[2] = { (float)w, (float)h };
+    wgpuQueueWriteBuffer(g.queue, s->uniform_buffer, 0, vp, 8);
 }
 
 int hello_tty_gpu_draw_cells(int surface_id, const float *vertices, int vertex_count) {

@@ -27,3 +27,8 @@ pub extern "C" fn waitpid_nonblock(pid : Int) -> Int = "hello_tty_waitpid_nonblo
 ///|
 /// Send SIGTERM to a child process.
 pub extern "C" fn kill_process(pid : Int) = "hello_tty_kill"
+
+///|
+/// Write a debug message to stderr (unbuffered).
+#borrow(msg)
+pub extern "C" fn debug_log(msg : Bytes, msg_len : Int) = "hello_tty_debug_log"
