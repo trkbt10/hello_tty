@@ -15,6 +15,7 @@
 #include <sys/ioctl.h>
 #include <spawn.h>
 #include <stdint.h>
+#include <sys/wait.h>
 
 #if defined(__APPLE__) || defined(__FreeBSD__)
 #include <util.h>
@@ -103,6 +104,25 @@ int32_t hello_tty_pty_write(int32_t master_fd, const uint8_t *data, int32_t len)
 
 void hello_tty_pty_close(int32_t master_fd) {
     close(master_fd);
+}
+
+int32_t hello_tty_pty_is_pid_alive(int32_t pid) {
+    if (pid <= 0) return 0;
+    return (kill(pid, 0) == 0) ? 1 : 0;
+}
+
+void hello_tty_pty_kill_child(int32_t pid) {
+    if (pid <= 0) return;
+    kill(pid, SIGHUP);
+    // Give the child a brief window to exit cleanly.
+    int status = 0;
+    for (int i = 0; i < 10; i++) {
+        pid_t result = waitpid(pid, &status, WNOHANG);
+        if (result == pid || result < 0) return;
+        usleep(10000);  // 10ms
+    }
+    kill(pid, SIGKILL);
+    waitpid(pid, &status, 0);
 }
 
 int32_t hello_tty_pty_resize(int32_t master_fd, int32_t rows, int32_t cols) {

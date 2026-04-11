@@ -6,7 +6,8 @@
     "moonbitlang/x": "0.4.41",
     "trkbt10/subprocess": "0.2.0",
     "trkbt10/osenv": "0.1.0",
-    "mizchi/font": "0.7.0"
+    "mizchi/font": "0.7.0",
+    "bobzhang/toml": "0.2.0"
   },
   "readme": "README.mbt.md",
   "repository": "",

@@ -218,6 +218,11 @@ class TerminalBaseView: NSView, NSTextInputClient {
         let bar = SearchBarView(frame: .zero)
         bar.searchController = sc
         bar.translatesAutoresizingMaskIntoConstraints = false
+        if let ui = tabManager?.uiConfig {
+            bar.overlayCornerRadius = ui.overlayCornerRadius
+            bar.overlayBorderWidth = ui.overlayBorderWidth
+            bar.overlayBgOpacity = ui.overlayBgOpacity
+        }
         bar.onClose = { [weak self] in
             self?.hideSearchBar()
         }
@@ -262,7 +267,52 @@ class TerminalBaseView: NSView, NSTextInputClient {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Select All", action: #selector(selectAllAction), keyEquivalent: "a"))
         menu.addItem(NSMenuItem(title: "Find…", action: #selector(findAction), keyEquivalent: "f"))
+
+        // Panel operations — only shown when the tab has multiple panels.
+        if let tabManager, let workspaceId,
+           let tab = tabManager.selectedTab(in: workspaceId),
+           tab.panels.count > 1,
+           let focused = tabManager.focusedPanel(in: workspaceId) {
+            menu.addItem(NSMenuItem.separator())
+            let detachItem = NSMenuItem(
+                title: "Move Panel to New Tab",
+                action: #selector(detachPanelToTabAction),
+                keyEquivalent: ""
+            )
+            detachItem.representedObject = focused.panelId
+            menu.addItem(detachItem)
+        }
+
+        // Split operations
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(
+            title: "Split Right",
+            action: #selector(splitRightAction),
+            keyEquivalent: "d"
+        ))
+        menu.addItem(NSMenuItem(
+            title: "Split Down",
+            action: #selector(splitDownAction),
+            keyEquivalent: "D"
+        ))
+
         return menu
+    }
+
+    @objc private func detachPanelToTabAction(_ sender: NSMenuItem) {
+        guard let panelId = sender.representedObject as? Int32,
+              let tabManager, let workspaceId else { return }
+        tabManager.detachPanelToTab(in: workspaceId, panelId: panelId)
+    }
+
+    @objc private func splitRightAction() {
+        guard let tabManager, let workspaceId else { return }
+        tabManager.splitFocusedPanel(in: workspaceId, direction: 0)
+    }
+
+    @objc private func splitDownAction() {
+        guard let tabManager, let workspaceId else { return }
+        tabManager.splitFocusedPanel(in: workspaceId, direction: 1)
     }
 
     @objc private func copyAction() {

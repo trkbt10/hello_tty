@@ -46,9 +46,12 @@
 // Input classification
 #define mbt_ffi_classify_key      _M0FP47trkbt1010hello__tty3src6bridge18ffi__classify__key
 
-// Theme & metrics
+// Theme, config & metrics
 #define mbt_ffi_get_theme         _M0FP47trkbt1010hello__tty3src6bridge15ffi__get__theme
 #define mbt_ffi_get_cell_metrics  _M0FP47trkbt1010hello__tty3src6bridge23ffi__get__cell__metrics
+#define mbt_ffi_get_ui_config     _M0FP47trkbt1010hello__tty3src6bridge20ffi__get__ui__config
+#define mbt_ffi_load_config       _M0FP47trkbt1010hello__tty3src6bridge17ffi__load__config
+#define mbt_ffi_detach_panel_to_tab _M0FP47trkbt1010hello__tty3src6bridge27ffi__detach__panel__to__tab
 
 // Tab & Panel management (layout-aware)
 #define mbt_ffi_create_tab        _M0FP47trkbt1010hello__tty3src6bridge16ffi__create__tab
@@ -144,9 +147,12 @@ extern int32_t         mbt_ffi_render_frame_for(moonbit_bytes_t session_id);
 // Input classification
 extern int32_t         mbt_ffi_classify_key(moonbit_bytes_t key, moonbit_bytes_t mods, moonbit_bytes_t has_marked);
 
-// Theme & metrics
+// Theme, config & metrics
 extern moonbit_bytes_t mbt_ffi_get_theme(void);
 extern moonbit_bytes_t mbt_ffi_get_cell_metrics(void);
+extern moonbit_bytes_t mbt_ffi_get_ui_config(moonbit_bytes_t font_line_height_x100);
+extern int32_t         mbt_ffi_load_config(moonbit_bytes_t toml_bytes);
+extern int32_t         mbt_ffi_detach_panel_to_tab(moonbit_bytes_t panel_id);
 
 // Tab & Panel management
 extern moonbit_bytes_t mbt_ffi_create_tab(moonbit_bytes_t rows, moonbit_bytes_t cols);
@@ -456,6 +462,25 @@ char *hello_tty_get_cell_metrics(void) {
     ensure_init();
     moonbit_bytes_t result = mbt_ffi_get_cell_metrics();
     return moonbit_bytes_to_cstr(result);
+}
+
+char *hello_tty_get_ui_config(const char *font_line_height_x100) {
+    ensure_init();
+    moonbit_bytes_t fb = cstr_to_moonbit_bytes(font_line_height_x100);
+    moonbit_bytes_t result = mbt_ffi_get_ui_config(fb);
+    return moonbit_bytes_to_cstr(result);
+}
+
+int32_t hello_tty_load_config(const char *toml_str) {
+    ensure_init();
+    moonbit_bytes_t tb = cstr_to_moonbit_bytes(toml_str);
+    return mbt_ffi_load_config(tb);
+}
+
+int32_t hello_tty_detach_panel_to_tab(const char *panel_id) {
+    ensure_init();
+    moonbit_bytes_t pb = cstr_to_moonbit_bytes(panel_id);
+    return mbt_ffi_detach_panel_to_tab(pb);
 }
 
 // ---------- Tab & Panel Management ----------

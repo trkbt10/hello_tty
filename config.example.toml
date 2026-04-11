@@ -1,0 +1,48 @@
+# hello_tty configuration
+# Copy to ~/.config/hello_tty/config.toml to customize.
+
+[terminal]
+rows = 24
+cols = 80
+shell = "/bin/zsh"
+max_scrollback = 10000
+
+[renderer]
+font_size = 14
+dpi_scale = 1.0
+atlas_size = 1024
+
+[theme]
+name = "midnight"          # "midnight" or "classic"
+# bg_alpha = 0.82          # 0.0 (transparent) to 1.0 (opaque)
+# fg = "#E6E6E6"           # Foreground color (#RRGGBB or #RRGGBBAA)
+# bg = "#14141A"           # Background color
+# cursor = "#66B3FFD9"     # Cursor color (with alpha)
+# selection = "#4073BF66"  # Selection highlight color
+
+[ui]
+# Corner radius ratio (0.0 = square, 0.5 = capsule).
+# Actual radius = tab_height * ratio.
+# Inner radius = max(outer_radius - padding, 0).
+tab_corner_ratio = 0.31
+
+# Tab dimensions
+tab_padding_horizontal = 12.0
+tab_padding_vertical = 6.0
+tab_min_width = 80.0
+tab_max_width = 180.0
+tab_spacing = 4.0
+
+# Tab bar
+tab_bar_height = 42.0
+titlebar_leading_inset = 12.0    # Leading padding (traffic lights are above, not beside)
+titlebar_trailing_inset = 12.0
+separator_thickness = 1.0
+
+# Close button
+tab_close_button_inset = 10.0   # Must be >= outer corner radius
+tab_close_button_size = 16.0
+
+# Panel dividers
+panel_divider_thickness = 1.0   # Visible line thickness
+panel_divider_hit_area = 4.0    # Total draggable area

@@ -76,10 +76,17 @@ pub fn SessionManager::create_session(
 /// Destroy a session by ID. Closes PTY if open.
 pub fn SessionManager::destroy_session(self : SessionManager, id : Int) -> Unit {
   match self.sessions.get(id) {
-    Some(session) =>
+    Some(session) => {
+      // Kill the child process first, then close the master fd.
+      // This prevents zombie processes from accumulating.
+      let pid = session.get_child_pid()
+      if pid > 0 {
+        @pty_ffi.pty_kill_child(pid)
+      }
       if session.get_master_fd() >= 0 {
         @pty_ffi.pty_close(session.get_master_fd())
       }
+    }
     None => ()
   }
   self.sessions.remove(id) |> ignore
@@ -90,6 +97,37 @@ pub fn SessionManager::destroy_session(self : SessionManager, id : Int) -> Unit 
         self.active_id = k
       }
     }
+  }
+}
+
+///|
+/// Get the child PID for a session. Returns -1 if session not found.
+pub fn SessionManager::get_child_pid(
+  self : SessionManager,
+  session_id : Int
+) -> Int {
+  match self.sessions.get(session_id) {
+    Some(session) => session.get_child_pid()
+    None => -1
+  }
+}
+
+///|
+/// Check if a session's child process is still alive.
+pub fn SessionManager::is_child_alive(
+  self : SessionManager,
+  session_id : Int
+) -> Bool {
+  match self.sessions.get(session_id) {
+    Some(session) => {
+      let pid = session.get_child_pid()
+      if pid > 0 {
+        @pty_ffi.pty_is_pid_alive(pid) == 1
+      } else {
+        false
+      }
+    }
+    None => false
   }
 }
 
@@ -138,9 +176,13 @@ pub fn SessionManager::count(self : SessionManager) -> Int {
 }
 
 ///|
-/// Destroy all sessions. Closes all PTYs.
+/// Destroy all sessions. Kills child processes and closes all PTYs.
 pub fn SessionManager::destroy_all(self : SessionManager) -> Unit {
   for _, session in self.sessions {
+    let pid = session.get_child_pid()
+    if pid > 0 {
+      @pty_ffi.pty_kill_child(pid)
+    }
     if session.get_master_fd() >= 0 {
       @pty_ffi.pty_close(session.get_master_fd())
     }

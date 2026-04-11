@@ -12,15 +12,20 @@ struct VisualEffectBackground: NSViewRepresentable {
     var material: NSVisualEffectView.Material
     var blendingMode: NSVisualEffectView.BlendingMode
     var state: NSVisualEffectView.State
+    /// Override appearance on the NSView directly, ensuring the material
+    /// renders in the correct mode regardless of system settings.
+    var appearance: NSAppearance?
 
     init(
         material: NSVisualEffectView.Material = .hudWindow,
         blendingMode: NSVisualEffectView.BlendingMode = .behindWindow,
-        state: NSVisualEffectView.State = .active
+        state: NSVisualEffectView.State = .active,
+        appearance: NSAppearance? = nil
     ) {
         self.material = material
         self.blendingMode = blendingMode
         self.state = state
+        self.appearance = appearance
     }
 
     func makeNSView(context: Context) -> NSVisualEffectView {
@@ -28,6 +33,7 @@ struct VisualEffectBackground: NSViewRepresentable {
         view.material = material
         view.blendingMode = blendingMode
         view.state = state
+        view.appearance = appearance
         return view
     }
 
@@ -35,6 +41,7 @@ struct VisualEffectBackground: NSViewRepresentable {
         nsView.material = material
         nsView.blendingMode = blendingMode
         nsView.state = state
+        nsView.appearance = appearance
     }
 }
 
@@ -105,13 +112,13 @@ class TerminalState: ObservableObject {
     let gridCache: TerminalGridCache
 
     /// Cell metrics — SoT is MoonBit's FontEngine (via getCellMetrics).
-    /// Initial values are fallbacks until GPU init provides real metrics.
     /// These represent the cell size in logical points (not pixels).
     /// The GPU renderer uses these same values * dpi_scale for pixel rendering.
-    var cellWidth: CGFloat = 8
-    var cellHeight: CGFloat = 16
-    var dpiScale: CGFloat = 2.0
-    /// Font for CPU fallback rendering (TerminalNSView).
+    /// Set once during init from bridge; updated if GPU re-initializes.
+    var cellWidth: CGFloat
+    var cellHeight: CGFloat
+    var dpiScale: CGFloat
+    /// Font for CPU renderer (TerminalNSView).
     /// Sized to match MoonBit's cell metrics.
     var font: NSFont
 
@@ -146,7 +153,7 @@ class TerminalState: ObservableObject {
         set { gridCache.dirty = newValue }
     }
 
-    init(theme: TerminalTheme = .fallback, sessionId: Int32 = -1) {
+    init(theme: TerminalTheme, sessionId: Int32) {
         self.theme = theme
         self.sessionId = sessionId
         self.gridCache = TerminalGridCache(sessionId: sessionId)
@@ -154,16 +161,17 @@ class TerminalState: ObservableObject {
         // Fetch cell metrics from MoonBit (SoT).
         // getCellMetrics ensures GPU init, so font engine is initialized.
         // The metrics are in pixel space; divide by dpiScale for logical points.
-        if let metrics = MoonBitBridge.shared.getCellMetrics() {
-            let dpi = metrics.dpiScale > 0 ? metrics.dpiScale : 2.0
-            self.cellWidth = metrics.cellWidth / dpi
-            self.cellHeight = metrics.cellHeight / dpi
-            self.dpiScale = dpi
-            font = NSFont.monospacedSystemFont(
-                ofSize: metrics.fontSize / dpi, weight: .regular)
-        } else {
-            font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        guard let metrics = MoonBitBridge.shared.getCellMetrics() else {
+            fatalError("hello_tty: failed to get cell metrics from MoonBit bridge")
         }
+        guard metrics.dpiScale > 0 else {
+            fatalError("hello_tty: invalid dpi_scale (\(metrics.dpiScale)) from MoonBit bridge")
+        }
+        self.cellWidth = metrics.cellWidth / metrics.dpiScale
+        self.cellHeight = metrics.cellHeight / metrics.dpiScale
+        self.dpiScale = metrics.dpiScale
+        self.font = NSFont.monospacedSystemFont(
+            ofSize: metrics.fontSize / metrics.dpiScale, weight: .regular)
 
         // Wire PTY output → session processing → grid refresh
         // Reply data (DSR cursor position reports, DA device attributes) is

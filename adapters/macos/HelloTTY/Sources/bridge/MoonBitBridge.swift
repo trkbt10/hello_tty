@@ -80,8 +80,10 @@ class MoonBitBridge {
     private typealias GetViewportOffsetFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
     private typealias GetScrollbackLengthFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
 
-    // Theme
+    // Theme & config
     private typealias GetThemeFn = @convention(c) () -> UnsafeMutablePointer<CChar>?
+    private typealias GetUIConfigFn = @convention(c) (UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
+    private typealias LoadConfigFn = @convention(c) (UnsafePointer<CChar>?) -> Int32
 
     // Font rasterization function types
     private typealias FontInitFn = @convention(c) (UnsafePointer<CChar>?, Int32, Int32) -> Int32
@@ -149,6 +151,7 @@ class MoonBitBridge {
     private var fnGetWorkspaceSnapshot: GetWorkspaceSnapshotFn?
     private var fnSplitPanel: SplitPanelFn?
     private var fnClosePanel: ClosePanelFn?
+    private var fnDetachPanelToTab: ClosePanelFn?  // same signature: (panelId) -> newTabId
     private var fnFocusPanel: FocusPanelFn?
     private var fnFocusPanelByIndex: FocusPanelByIndexFn?
     private var fnFocusDirection: FocusDirectionFn?
@@ -176,9 +179,11 @@ class MoonBitBridge {
     private var fnGetViewportOffset: GetViewportOffsetFn?
     private var fnGetScrollbackLength: GetScrollbackLengthFn?
 
-    // Theme & metrics
+    // Theme, config & metrics
     private var fnGetTheme: GetThemeFn?
     private var fnGetCellMetrics: GetThemeFn?  // same signature: () -> UnsafeMutablePointer<CChar>?
+    private var fnGetUIConfig: GetUIConfigFn?
+    private var fnLoadConfig: LoadConfigFn?
 
     // Font
     private var fnFontInit: FontInitFn?
@@ -331,6 +336,7 @@ class MoonBitBridge {
         fnGetWorkspaceSnapshot = sym("hello_tty_get_workspace_snapshot")
         fnSplitPanel = sym("hello_tty_split_panel")
         fnClosePanel = sym("hello_tty_close_panel")
+        fnDetachPanelToTab = sym("hello_tty_detach_panel_to_tab")
         fnFocusPanel = sym("hello_tty_focus_panel")
         fnFocusPanelByIndex = sym("hello_tty_focus_panel_by_index")
         fnFocusDirection = sym("hello_tty_focus_direction")
@@ -371,6 +377,8 @@ class MoonBitBridge {
         // Theme & metrics
         fnGetTheme = sym("hello_tty_get_theme")
         fnGetCellMetrics = sym("hello_tty_get_cell_metrics")
+        fnGetUIConfig = sym("hello_tty_get_ui_config")
+        fnLoadConfig = sym("hello_tty_load_config")
 
         // Font
         fnFontInit = sym("hello_tty_font_init")
@@ -893,6 +901,13 @@ class MoonBitBridge {
         return "\(panelId)".withCString { fn($0) }
     }
 
+    /// Detach a panel from its tab's split and create a new tab for it.
+    /// Returns the new tab ID, or -1 on failure.
+    func detachPanelToTab(panelId: Int32) -> Int32 {
+        guard let fn = fnDetachPanelToTab else { return -1 }
+        return "\(panelId)".withCString { fn($0) }
+    }
+
     /// Focus a panel by ID.
     func focusPanel(panelId: Int32) -> Bool {
         guard let fn = fnFocusPanel else { return false }
@@ -1236,14 +1251,18 @@ class MoonBitBridge {
             return (arr[0], arr[1], arr[2], a)
         }
 
+        guard let name = obj["name"] as? String,
+              let isDark = obj["is_dark"] as? Bool,
+              let bgAlpha = obj["bg_alpha"] as? Double,
+              let fg = parseRGBA(obj["fg"]),
+              let bg = parseRGBA(obj["bg"]),
+              let cursor = parseRGBA(obj["cursor"]),
+              let selection = parseRGBA(obj["selection"])
+        else { return nil }
+
         return ThemeInfo(
-            name: obj["name"] as? String ?? "Unknown",
-            isDark: obj["is_dark"] as? Bool ?? true,
-            bgAlpha: obj["bg_alpha"] as? Double ?? 1.0,
-            fg: parseRGBA(obj["fg"]) ?? (230, 230, 230, 255),
-            bg: parseRGBA(obj["bg"]) ?? (20, 20, 26, 255),
-            cursor: parseRGBA(obj["cursor"]) ?? (102, 179, 255, 217),
-            selection: parseRGBA(obj["selection"]) ?? (64, 115, 191, 102)
+            name: name, isDark: isDark, bgAlpha: bgAlpha,
+            fg: fg, bg: bg, cursor: cursor, selection: selection
         )
     }
 
@@ -1270,17 +1289,120 @@ class MoonBitBridge {
         else { return nil }
 
         guard let cw = obj["cell_width"] as? Int,
-              let ch = obj["cell_height"] as? Int
+              let ch = obj["cell_height"] as? Int,
+              let dpi = obj["dpi_scale"] as? Double,
+              let fontSize = obj["font_size"] as? Int
         else { return nil }
 
-        let dpi = obj["dpi_scale"] as? Double ?? 2.0
-        let fontSize = obj["font_size"] as? Int ?? 14
         return CellMetrics(
             cellWidth: CGFloat(cw),
             cellHeight: CGFloat(ch),
             dpiScale: CGFloat(dpi),
             fontSize: CGFloat(fontSize)
         )
+    }
+
+    // MARK: - UI Config (MoonBit SoT)
+
+    /// UI configuration with computed corner radii.
+    /// All values are in logical points.
+    struct UIConfigInfo {
+        let tabBarHeight: CGFloat
+        let outerCornerRadius: CGFloat
+        let innerCornerRadiusH: CGFloat
+        let innerCornerRadiusV: CGFloat
+        let tabPaddingH: CGFloat
+        let tabPaddingV: CGFloat
+        let titlebarLeadingInset: CGFloat
+        let titlebarTrailingInset: CGFloat
+        let closeButtonInset: CGFloat
+        let closeButtonSize: CGFloat
+        let closeButtonExtraTrailing: CGFloat
+        let separatorThickness: CGFloat
+        let tabSpacing: CGFloat
+        let tabMinWidth: CGFloat
+        let tabMaxWidth: CGFloat
+        let tabHeight: CGFloat
+        let panelDividerThickness: CGFloat
+        let panelDividerHitArea: CGFloat
+        let overlayCornerRadius: CGFloat
+        let overlayBorderWidth: CGFloat
+        let overlayBgOpacity: CGFloat
+    }
+
+    /// Get UI config from MoonBit with computed corner radii.
+    /// fontLineHeight: the line height of the tab label font in points.
+    func getUIConfig(fontLineHeight: CGFloat = 14.0) -> UIConfigInfo? {
+        guard let fn = fnGetUIConfig else { return nil }
+        let x100 = Int(fontLineHeight * 100)
+        guard let ptr = fn("\(x100)") else { return nil }
+        defer { fnFreeString?(ptr) }
+        let jsonStr = String(cString: ptr)
+
+        guard let data = jsonStr.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+
+        guard let tabBarHeight = cgf(obj["tab_bar_height"]),
+              let outerCornerRadius = cgf(obj["outer_corner_radius"]),
+              let innerCornerRadiusH = cgf(obj["inner_corner_radius_h"]),
+              let innerCornerRadiusV = cgf(obj["inner_corner_radius_v"]),
+              let tabPaddingH = cgf(obj["tab_padding_horizontal"]),
+              let tabPaddingV = cgf(obj["tab_padding_vertical"]),
+              let titlebarLeadingInset = cgf(obj["titlebar_leading_inset"]),
+              let titlebarTrailingInset = cgf(obj["titlebar_trailing_inset"]),
+              let closeButtonInset = cgf(obj["close_button_inset"]),
+              let closeButtonSize = cgf(obj["tab_close_button_size"]),
+              let closeButtonExtraTrailing = cgf(obj["close_button_extra_trailing"]),
+              let separatorThickness = cgf(obj["separator_thickness"]),
+              let tabSpacing = cgf(obj["tab_spacing"]),
+              let tabMinWidth = cgf(obj["tab_min_width"]),
+              let tabMaxWidth = cgf(obj["tab_max_width"]),
+              let tabHeight = cgf(obj["tab_height"]),
+              let panelDividerThickness = cgf(obj["panel_divider_thickness"]),
+              let panelDividerHitArea = cgf(obj["panel_divider_hit_area"]),
+              let overlayCornerRadius = cgf(obj["overlay_corner_radius"]),
+              let overlayBorderWidth = cgf(obj["overlay_border_width"]),
+              let overlayBgOpacity = cgf(obj["overlay_bg_opacity"])
+        else { return nil }
+
+        return UIConfigInfo(
+            tabBarHeight: tabBarHeight,
+            outerCornerRadius: outerCornerRadius,
+            innerCornerRadiusH: innerCornerRadiusH,
+            innerCornerRadiusV: innerCornerRadiusV,
+            tabPaddingH: tabPaddingH,
+            tabPaddingV: tabPaddingV,
+            titlebarLeadingInset: titlebarLeadingInset,
+            titlebarTrailingInset: titlebarTrailingInset,
+            closeButtonInset: closeButtonInset,
+            closeButtonSize: closeButtonSize,
+            closeButtonExtraTrailing: closeButtonExtraTrailing,
+            separatorThickness: separatorThickness,
+            tabSpacing: tabSpacing,
+            tabMinWidth: tabMinWidth,
+            tabMaxWidth: tabMaxWidth,
+            tabHeight: tabHeight,
+            panelDividerThickness: panelDividerThickness,
+            panelDividerHitArea: panelDividerHitArea,
+            overlayCornerRadius: overlayCornerRadius,
+            overlayBorderWidth: overlayBorderWidth,
+            overlayBgOpacity: overlayBgOpacity
+        )
+    }
+
+    private func cgf(_ value: Any?) -> CGFloat? {
+        if let d = value as? Double { return CGFloat(d) }
+        if let i = value as? Int { return CGFloat(i) }
+        return nil
+    }
+
+    /// Load a TOML configuration string into MoonBit.
+    /// Call before using other bridge functions to apply user settings.
+    @discardableResult
+    func loadConfig(toml: String) -> Bool {
+        guard let fn = fnLoadConfig else { return false }
+        return fn(toml) == 0
     }
 
     // MARK: - GPU Rendering (MoonBit Pipeline)

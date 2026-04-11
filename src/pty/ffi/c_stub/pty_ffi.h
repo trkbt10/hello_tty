@@ -29,6 +29,12 @@ int hello_tty_pty_write(int fd, const unsigned char *buf, int len);
 // Close a file descriptor.
 void hello_tty_pty_close(int fd);
 
+// Terminate a child process (SIGHUP → SIGKILL) and reap with waitpid.
+void hello_tty_pty_kill_child(int pid);
+
+// Check if a process is alive. Returns 1 if alive, 0 if dead/not found.
+int hello_tty_pty_is_pid_alive(int pid);
+
 // Set fd to non-blocking mode. Returns 0 on success.
 int hello_tty_pty_set_nonblocking(int fd);
 

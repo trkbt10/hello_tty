@@ -15,7 +15,8 @@
 priv struct BridgeState {
   sessions : @session.SessionManager
   layout : @layout.LayoutManager
-  theme : @theme.Theme
+  mut theme : @theme.Theme
+  mut config : @config.Config
   mut renderer : @renderer.Renderer?
   mut gpu_backend : @renderer.GpuBackend?
   /// Mapping from session_id to GPU surface_id.
@@ -27,10 +28,13 @@ priv struct BridgeState {
 ///|
 let bridge_state : BridgeState = {
   let sessions = @session.SessionManager::new()
+  let config = @config.Config::default()
+  let theme = config.resolve_theme()
   {
     sessions,
     layout: @layout.LayoutManager::new(sessions),
-    theme: @theme.Theme::midnight(),
+    theme,
+    config,
     renderer: None,
     gpu_backend: None,
     surface_map: {},
@@ -594,17 +598,19 @@ fn ensure_gpu_initialized() -> Unit {
 /// Swift uses this for rendering alignment. cell_width/cell_height are in pixels.
 pub fn ffi_get_cell_metrics() -> Bytes {
   ensure_gpu_initialized()
-  let (cw, ch) = match bridge_state.gpu_backend {
-    Some(gpu) => gpu.get_cell_size()
-    None => (8, 16)
+  guard bridge_state.gpu_backend is Some(gpu) else {
+    // GPU init succeeded via ensure_gpu_initialized() but backend is None — fatal.
+    result_buf.result_bytes = Bytes::new(0)
+    return result_buf.result_bytes
   }
-  let (dpi, font_size) = match bridge_state.renderer {
-    Some(r) => {
-      let cfg = r.get_config()
-      (cfg.dpi_scale, cfg.font_size)
-    }
-    None => ((2.0 : Float), 14)
+  guard bridge_state.renderer is Some(r) else {
+    result_buf.result_bytes = Bytes::new(0)
+    return result_buf.result_bytes
   }
+  let (cw, ch) = gpu.get_cell_size()
+  let cfg = r.get_config()
+  let dpi = cfg.dpi_scale
+  let font_size = cfg.font_size
   let m : Map[String, Json] = {
     "cell_width": cw.to_json(),
     "cell_height": ch.to_json(),
@@ -1054,6 +1060,14 @@ pub fn ffi_focus_direction(direction_bytes : Bytes) -> Int {
 }
 
 ///|
+/// Detach a panel from the current tab's split and create a new tab for it.
+/// Returns the new tab ID, or -1 on failure.
+pub fn ffi_detach_panel_to_tab(panel_id_bytes : Bytes) -> Int {
+  let panel_id = bytes_to_int(panel_id_bytes, -1)
+  bridge_state.layout.detach_panel_to_tab(panel_id)
+}
+
+///|
 /// Get the layout tree of the active tab as JSON.
 /// Returns a recursive tree structure:
 ///   Leaf: {"type":"leaf", "panel_id":N, "session_id":N, "rows":N, "cols":N}
@@ -1462,6 +1476,32 @@ pub fn ffi_get_theme() -> Bytes {
   }
   result_buf.result_bytes = @utf8.encode(theme_map.to_json().stringify())
   result_buf.result_bytes
+}
+
+// ========== UI Config ==========
+
+///|
+/// Get UI config as JSON for the platform adapter.
+/// Includes computed corner radii based on the ratio and padding values.
+/// font_line_height should be passed from the platform (e.g. 14.0 for 12pt system font).
+pub fn ffi_get_ui_config(font_line_height_x100 : Bytes) -> Bytes {
+  let font_lh : Float = Float::from_int(bytes_to_int(font_line_height_x100, 1400)) /
+    100.0
+  let json = bridge_state.config.ui.to_json(font_lh)
+  result_buf.result_bytes = @utf8.encode(json.stringify())
+  result_buf.result_bytes
+}
+
+///|
+/// Load configuration from a TOML string.
+/// Call this before any other FFI functions to apply user config.
+/// Returns 0 on success.
+pub fn ffi_load_config(toml_bytes : Bytes) -> Int {
+  let toml_str = bytes_to_string(toml_bytes)
+  let config = @config.Config::from_toml(toml_str)
+  bridge_state.theme = config.resolve_theme()
+  bridge_state.config = config
+  0
 }
 
 // ========== Shutdown ==========

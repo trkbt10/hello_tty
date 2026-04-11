@@ -127,7 +127,6 @@ struct TabDragState: Equatable {
     let tabId: Int32
     let sourceWorkspaceId: Int32
     var screenPoint: CGPoint
-    var hoverTarget: TabDragHoverTarget?
 }
 
 private struct RegisteredTabDropTarget {
@@ -159,9 +158,23 @@ final class TabManager: ObservableObject {
     @Published private(set) var workspaces: [TerminalWorkspace] = []
     @Published private(set) var activeWorkspaceId: Int32?
     @Published private(set) var tabDragState: TabDragState?
+    /// Current hover target during tab drag. Separated from tabDragState so that
+    /// frame registration can update hover silently without triggering the
+    /// @Published notification on tabDragState (which would cause a feedback loop
+    /// with ScreenFrameReporter re-registration during SwiftUI body evaluation).
+    @Published private(set) var dragHoverTarget: TabDragHoverTarget?
 
     let bridge = MoonBitBridge.shared
     let theme: TerminalTheme
+    /// UI config from MoonBit — computed corner radii, paddings, etc.
+    /// Loaded once at init from bridge; updated on config reload.
+    private(set) var uiConfig: MoonBitBridge.UIConfigInfo
+
+    /// During divider drag, stores the pixel size of the first pane.
+    /// Keyed by panelId (the firstLeafId of the split being dragged).
+    /// LayoutNodeView uses this to bypass ratio-based frame calculation,
+    /// avoiding the feedback loop between DragGesture and re-parsed ratio.
+    var dividerDragFirstSize: [Int32: CGFloat] = [:]
 
     private var tabsById: [Int32: TerminalTab] = [:]
     private var workspaceSizes: [Int32: CGSize] = [:]
@@ -173,6 +186,12 @@ final class TabManager: ObservableObject {
 
     init() {
         self.theme = TerminalTheme.fromBridge(MoonBitBridge.shared)
+        let font = NSFont.systemFont(ofSize: 12)
+        let fontLineHeight = font.ascender - font.descender + font.leading
+        guard let ui = MoonBitBridge.shared.getUIConfig(fontLineHeight: CGFloat(fontLineHeight)) else {
+            fatalError("hello_tty: failed to load UI config from MoonBit bridge — dylib not loaded")
+        }
+        self.uiConfig = ui
         _ = syncWorkspacesFromBridge()
     }
 
@@ -195,16 +214,17 @@ final class TabManager: ObservableObject {
     }
 
     func registerDropTarget(id: String, target: TabDragHoverTarget, frame: CGRect) {
+        let old = dropTargets[id]
         dropTargets[id] = RegisteredTabDropTarget(id: id, target: target, frame: frame)
-        if let dragState = tabDragState {
-            updateTabDrag(screenPoint: dragState.screenPoint)
+        if tabDragState != nil, old?.frame != frame {
+            recomputeHoverTarget()
         }
     }
 
     func unregisterDropTarget(id: String) {
-        dropTargets.removeValue(forKey: id)
-        if let dragState = tabDragState {
-            updateTabDrag(screenPoint: dragState.screenPoint)
+        guard dropTargets.removeValue(forKey: id) != nil else { return }
+        if tabDragState != nil {
+            recomputeHoverTarget()
         }
     }
 
@@ -221,10 +241,10 @@ final class TabManager: ObservableObject {
     }
 
     func registerTabBarFrame(workspaceId: Int32, frame: CGRect) {
+        let old = tabBarFrames[workspaceId]
         tabBarFrames[workspaceId] = frame
-        // Recompute hover in case a drag is in progress.
-        if let dragState = tabDragState {
-            updateTabDrag(screenPoint: dragState.screenPoint)
+        if tabDragState != nil, old != frame {
+            recomputeHoverTarget()
         }
     }
 
@@ -277,30 +297,50 @@ final class TabManager: ObservableObject {
         tabDragState = TabDragState(
             tabId: tabId,
             sourceWorkspaceId: sourceWorkspaceId,
-            screenPoint: NSEvent.mouseLocation,
-            hoverTarget: nil
+            screenPoint: NSEvent.mouseLocation
         )
+        dragHoverTarget = nil
         updateTabDrag(screenPoint: NSEvent.mouseLocation)
     }
 
     func updateTabDrag(screenPoint: CGPoint) {
         guard var dragState = tabDragState else { return }
         dragState.screenPoint = screenPoint
-        dragState.hoverTarget = hoveredTarget(at: screenPoint)
         tabDragState = dragState
+        // Update hover target separately. This is also @Published, but
+        // the key difference is that frame registration methods below
+        // call recomputeHoverTarget() which only writes to dragHoverTarget
+        // (not tabDragState), preventing a full re-render cascade.
+        dragHoverTarget = hoveredTarget(at: screenPoint)
+    }
+
+    /// Recompute hover target from current drag position and frame data.
+    /// Called by registerDropTarget / registerTabBarFrame when frames change
+    /// during a drag. Only updates dragHoverTarget, not tabDragState.
+    private func recomputeHoverTarget() {
+        guard let dragState = tabDragState else { return }
+        let newTarget = hoveredTarget(at: dragState.screenPoint)
+        if dragHoverTarget != newTarget {
+            dragHoverTarget = newTarget
+        }
     }
 
     func cancelTabDrag() {
         tabDragState = nil
+        dragHoverTarget = nil
     }
 
     func finishTabDrag(screenPoint: CGPoint) -> TabDragDropOutcome {
         guard let dragState = tabDragState else { return .none }
         updateTabDrag(screenPoint: screenPoint)
         let resolvedState = tabDragState ?? dragState
-        defer { tabDragState = nil }
+        let resolvedTarget = dragHoverTarget
+        defer {
+            tabDragState = nil
+            dragHoverTarget = nil
+        }
 
-        switch resolvedState.hoverTarget {
+        switch resolvedTarget {
         case .tabBar(let workspaceId):
             let index = tabInsertionIndex(workspaceId: workspaceId, screenX: resolvedState.screenPoint.x)
             let sourceWorkspaceId = resolvedState.sourceWorkspaceId
@@ -321,10 +361,12 @@ final class TabManager: ObservableObject {
             return .attached(workspaceId: workspaceId)
 
         case .panel(let workspaceId, let panelId):
+            let dir = panelDropEdge(workspaceId: workspaceId, panelId: panelId)?.direction ?? 0
             if dropTabOnPanel(
                 tabId: resolvedState.tabId,
                 to: workspaceId,
-                targetPanelId: panelId
+                targetPanelId: panelId,
+                direction: dir
             ) {
                 return .merged(workspaceId: workspaceId, panelId: panelId)
             }
@@ -336,10 +378,12 @@ final class TabManager: ObservableObject {
             else {
                 return .none
             }
+            let dir = panelDropEdge(workspaceId: workspaceId, panelId: targetPanelId)?.direction ?? 0
             if dropTabOnPanel(
                 tabId: resolvedState.tabId,
                 to: workspaceId,
-                targetPanelId: targetPanelId
+                targetPanelId: targetPanelId,
+                direction: dir
             ) {
                 return .merged(workspaceId: workspaceId, panelId: targetPanelId)
             }
@@ -360,7 +404,7 @@ final class TabManager: ObservableObject {
 
     func isHoveringTabInsertion(workspaceId: Int32?, index: Int) -> Bool {
         guard let workspaceId, let dragState = tabDragState else { return false }
-        switch dragState.hoverTarget {
+        switch dragHoverTarget {
         case .tabInsertion(let wid, let idx):
             return wid == workspaceId && idx == index
         case .tabBar(let wid) where wid == workspaceId:
@@ -371,7 +415,7 @@ final class TabManager: ObservableObject {
     }
 
     func isHoveringPanel(workspaceId: Int32, panelId: Int32) -> Bool {
-        let hoverTarget = tabDragState?.hoverTarget
+        let hoverTarget = dragHoverTarget
         if hoverTarget == .panel(workspaceId: workspaceId, panelId: panelId) {
             return true
         }
@@ -380,6 +424,41 @@ final class TabManager: ObservableObject {
                 || selectedTab(in: workspaceId)?.panels.first?.panelId == panelId
         }
         return false
+    }
+
+    /// Split direction when dropping a tab on a panel.
+    /// Determined by which edge of the panel frame the cursor is nearest to.
+    ///
+    /// Returns: 0 = vertical (left/right), 1 = horizontal (top/bottom).
+    /// The Bool indicates which half: false = first half (left or top),
+    /// true = second half (right or bottom).
+    func panelDropEdge(workspaceId: Int32, panelId: Int32) -> (direction: Int32, secondHalf: Bool)? {
+        guard let dragState = tabDragState,
+              isHoveringPanel(workspaceId: workspaceId, panelId: panelId) else {
+            return nil
+        }
+        let targetId = "workspace-\(workspaceId)-panel-\(panelId)"
+        guard let frame = dropTargets[targetId]?.frame else { return nil }
+
+        let point = dragState.screenPoint
+        // Normalized position within the panel (0..1)
+        let nx = (point.x - frame.minX) / frame.width
+        let ny = (point.y - frame.minY) / frame.height
+
+        // Distance from each edge (0 = at edge, 0.5 = center)
+        let distLeft = nx
+        let distRight = 1 - nx
+        let distBottom = ny          // macOS screen coords: y=0 at bottom
+        let distTop = 1 - ny
+        let minDist = min(distLeft, distRight, distBottom, distTop)
+
+        if minDist == distLeft || minDist == distRight {
+            // Horizontal distance is smallest → vertical split (left/right)
+            return (direction: 0, secondHalf: nx > 0.5)
+        } else {
+            // Vertical distance is smallest → horizontal split (top/bottom)
+            return (direction: 1, secondHalf: ny < 0.5)  // y inverted: smaller y = bottom of screen = bottom half
+        }
     }
 
     func tabs(in workspaceId: Int32?) -> [TerminalTab] {
@@ -573,6 +652,30 @@ final class TabManager: ObservableObject {
         if let activeWorkspaceId {
             splitFocusedPanel(in: activeWorkspaceId, direction: direction)
         }
+    }
+
+    /// Detach a panel from its tab's split and create a new tab for it.
+    /// The panel's PTY session is preserved.
+    func detachPanelToTab(in workspaceId: Int32, panelId: Int32) {
+        activateWorkspaceIfNeeded(workspaceId)
+        guard let tab = selectedTab(in: workspaceId),
+              let panel = tab.panel(forPanelId: panelId) else { return }
+        // Must have more than one panel to detach from
+        guard tab.panels.count > 1 else { return }
+
+        let newTabId = bridge.detachPanelToTab(panelId: panelId)
+        guard newTabId >= 0 else { return }
+
+        // Move the panel from the source tab to the new tab in Swift state
+        tab.removePanel(panelId: panelId)
+        let newTab = tabsById[newTabId] ?? TerminalTab(tabId: newTabId)
+        tabsById[newTabId] = newTab
+        newTab.addPanel(panel)
+        panel.isFocused = true
+
+        _ = syncWorkspacesFromBridge()
+        forceLayoutResize(for: workspaceId)
+        makeFocusedPanelFirstResponder(in: workspaceId)
     }
 
     func closeFocusedPanel(in workspaceId: Int32) {

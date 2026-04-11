@@ -137,6 +137,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Observable
     func beginObservedTabDrag(tabId: Int32, screenPoint: CGPoint) {
         lastTabDragOutcome = .none
         beginObservingTabDrag()
+        tabDragEventObserver.recordDragStart(tabId: tabId)
         tabManager.beginTabDrag(tabId: tabId)
         tabManager.updateTabDrag(screenPoint: screenPoint)
     }
@@ -231,18 +232,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Observable
     }
 
     private func handleObservedTabDragEvent(_ event: NSEvent) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            guard self.tabManager.tabDragState != nil else { return }
-            let point = self.screenPoint(for: event)
-            switch event.type {
-            case .leftMouseDragged:
-                self.tabManager.updateTabDrag(screenPoint: point)
-            case .leftMouseUp:
-                self.completeObservedTabDrag(screenPoint: point)
-            default:
-                break
-            }
+        // NSEvent monitor callbacks run on the main thread during Cocoa event
+        // dispatch. Process synchronously to avoid 1-frame delay between mouse
+        // movement and hover state update, which causes highlight flicker.
+        guard tabManager.tabDragState != nil else { return }
+        let point = screenPoint(for: event)
+        switch event.type {
+        case .leftMouseDragged:
+            tabManager.updateTabDrag(screenPoint: point)
+        case .leftMouseUp:
+            completeObservedTabDrag(screenPoint: point)
+        default:
+            break
         }
     }
 
@@ -301,7 +302,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Observable
             return
         }
 
-        let accessory = TitlebarAccessoryHostingController(rootView: rootView)
+        let accessory = TitlebarAccessoryHostingController(
+            rootView: rootView,
+            tabBarHeight: tabManager.uiConfig.tabBarHeight
+        )
         titlebarAccessories[key] = accessory
         window.addTitlebarAccessoryViewController(accessory)
     }
@@ -310,11 +314,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Observable
 final class TitlebarAccessoryHostingController: NSTitlebarAccessoryViewController {
     private let hostingView: NonMovableHostingView<AnyView>
 
-    init(rootView: AnyView) {
+    init(rootView: AnyView, tabBarHeight: CGFloat = 42) {
         self.hostingView = NonMovableHostingView(rootView: rootView)
         super.init(nibName: nil, bundle: nil)
         self.layoutAttribute = .top
-        self.fullScreenMinHeight = 42
+        self.fullScreenMinHeight = tabBarHeight
         self.view = hostingView
         self.view.translatesAutoresizingMaskIntoConstraints = false
     }

@@ -528,6 +528,57 @@ final class TabDragDropScenarioRunner {
         }
     }
 
+    private func scenario10_hoverTargetStability(primaryWorkspaceId: Int32) {
+        resetToSingleWindow(primaryWorkspaceId: primaryWorkspaceId)
+        if tabManager.tabs(in: primaryWorkspaceId).count < 2 {
+            _ = tabManager.newTab(in: primaryWorkspaceId)
+        }
+        advance(after: 0.6) {
+            let tabs = self.tabManager.tabs(in: primaryWorkspaceId)
+            guard tabs.count >= 2, let draggedTab = tabs.last else {
+                self.fail("scenario10: need at least 2 tabs")
+                self.reportAndExit()
+                return
+            }
+            guard let startFrame = self.tabManager.frameForTab(tabId: draggedTab.tabId) else {
+                self.fail("scenario10: missing source tab frame")
+                self.reportAndExit()
+                return
+            }
+            // Drag over the tab bar — hover should be .tabBar and stay stable
+            let barTarget = TabDragHoverTarget.tabBar(workspaceId: primaryWorkspaceId)
+            guard let barFrame = self.tabManager.frameForDropTarget(barTarget)
+                    ?? self.tabManager.frameForDropTarget(.tabBar(workspaceId: primaryWorkspaceId))
+            else {
+                self.fail("scenario10: missing tab bar frame")
+                self.reportAndExit()
+                return
+            }
+            let midPoint = CGPoint(x: barFrame.midX, y: barFrame.midY)
+
+            self.tabManager.beginTabDrag(tabId: draggedTab.tabId)
+            self.tabManager.updateTabDrag(screenPoint: midPoint)
+
+            // Check hover target immediately
+            let target1 = self.tabManager.dragHoverTarget
+
+            // Simulate a frame re-registration (as ScreenFrameReporter would do)
+            self.tabManager.registerTabBarFrame(workspaceId: primaryWorkspaceId, frame: barFrame)
+
+            // Check hover target again — should be identical
+            let target2 = self.tabManager.dragHoverTarget
+
+            if target1 == target2, case .tabBar = target1 {
+                self.pass("scenario10: dragHoverTarget is stable across frame re-registration")
+            } else {
+                self.fail("scenario10: dragHoverTarget changed: \(String(describing: target1)) → \(String(describing: target2))")
+            }
+
+            self.tabManager.cancelTabDrag()
+            self.reportAndExit()
+        }
+    }
+
     private func scenario9_systemMouseDragOutCreatesDetachedWindow(primaryWorkspaceId: Int32) {
         resetToSingleWindow(primaryWorkspaceId: primaryWorkspaceId)
         if tabManager.tabs(in: primaryWorkspaceId).count < 2 {
@@ -575,7 +626,7 @@ final class TabDragDropScenarioRunner {
                         } else {
                             self.fail("scenario9: expected drag-out to create a visible detached window, got startedTab=\(String(describing: self.observer.lastBeginObservedTabDragTabId)) startCount=\(self.observer.observedDragStartCount) outcome=\(self.appDelegate.lastTabDragOutcome) dragState=\(String(describing: self.tabManager.tabDragState)) workspaces=\(workspaceCount) visibleWindows=\(visibleWindows.count)")
                         }
-                        self.reportAndExit()
+                        self.scenario10_hoverTargetStability(primaryWorkspaceId: primaryWorkspaceId)
                     }
                 }
             }

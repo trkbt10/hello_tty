@@ -29,14 +29,10 @@ class SearchBarView: NSView {
 
     private func setupUI() {
         wantsLayer = true
-        layer?.backgroundColor = NSColor(white: 0.15, alpha: 0.95).cgColor
-        layer?.cornerRadius = 6
-        layer?.borderWidth = 0.5
-        layer?.borderColor = NSColor(white: 0.3, alpha: 1.0).cgColor
+        updateColors()
 
         // Shadow
         shadow = NSShadow()
-        layer?.shadowColor = NSColor.black.withAlphaComponent(0.5).cgColor
         layer?.shadowOffset = CGSize(width: 0, height: -2)
         layer?.shadowRadius = 4
         layer?.shadowOpacity = 1.0
@@ -99,6 +95,29 @@ class SearchBarView: NSView {
             searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
             statusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 60),
         ])
+    }
+
+    /// UI config values for overlay styling. Set by the creator (TerminalBaseView).
+    var overlayCornerRadius: CGFloat = 6
+    var overlayBorderWidth: CGFloat = 0.5
+    var overlayBgOpacity: CGFloat = 0.95
+
+    /// Update layer colors to match the current effective appearance.
+    /// Called on setup and whenever the appearance changes.
+    private func updateColors() {
+        layer?.cornerRadius = overlayCornerRadius
+        layer?.borderWidth = overlayBorderWidth
+        // Resolve semantic colors under the effective appearance.
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(overlayBgOpacity).cgColor
+            layer?.borderColor = NSColor.separatorColor.cgColor
+            layer?.shadowColor = NSColor.shadowColor.withAlphaComponent(0.3).cgColor
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateColors()
     }
 
     /// Focus the search field and select its text.

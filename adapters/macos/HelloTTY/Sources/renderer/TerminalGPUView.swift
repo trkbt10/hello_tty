@@ -37,6 +37,11 @@ class TerminalGPUView: TerminalBaseView {
         layer.framebufferOnly = true
         layer.isOpaque = false
         layer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        // Pre-fill with theme background so the layer never shows a bare black
+        // frame during tab switch (between DisplayLink stop and first render).
+        if let bg = terminalState?.theme.background {
+            layer.backgroundColor = bg.cgColor
+        }
         metalLayer = layer
         return layer
     }

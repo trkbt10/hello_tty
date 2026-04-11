@@ -51,6 +51,7 @@ fn main {
   let _ = @bridge.ffi_focus_panel(_dummy_bytes)
   let _ = @bridge.ffi_focus_panel_by_index(_dummy_bytes)
   let _ = @bridge.ffi_focus_direction(_dummy_bytes)
+  let _ = @bridge.ffi_detach_panel_to_tab(_dummy_bytes)
   let _ : Bytes = @bridge.ffi_get_layout()
   let _ : Bytes = @bridge.ffi_get_all_panels()
   let _ = @bridge.ffi_get_focused_panel_id()
@@ -68,6 +69,8 @@ fn main {
   let _ = @bridge.ffi_get_scrollback_length(_dummy_bytes)
   let _ = @bridge.ffi_classify_key(_dummy_bytes, _dummy_bytes, _dummy_bytes)
   let _ : Bytes = @bridge.ffi_get_theme()
+  let _ : Bytes = @bridge.ffi_get_ui_config(_dummy_bytes)
+  let _ = @bridge.ffi_load_config(_dummy_bytes)
   let _ = @bridge.ffi_shutdown()
   println("bridge_lib: all exports referenced")
 }

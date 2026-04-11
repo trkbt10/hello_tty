@@ -195,6 +195,29 @@ void hello_tty_pty_close(int fd) {
   close(fd);
 }
 
+// Terminate a child process: send SIGHUP, then SIGKILL if it doesn't exit,
+// then reap with waitpid to prevent zombies.
+// Check if a process is alive. Returns 1 if alive, 0 if dead/not found.
+int hello_tty_pty_is_pid_alive(int pid) {
+  if (pid <= 0) return 0;
+  return (kill(pid, 0) == 0) ? 1 : 0;
+}
+
+void hello_tty_pty_kill_child(int pid) {
+  if (pid <= 0) return;
+  kill(pid, SIGHUP);
+  // Give the child a brief window to exit cleanly.
+  int status = 0;
+  for (int i = 0; i < 10; i++) {
+    pid_t result = waitpid(pid, &status, WNOHANG);
+    if (result == pid || result < 0) return;  // reaped or error
+    usleep(10000);  // 10ms
+  }
+  // Force kill if still alive.
+  kill(pid, SIGKILL);
+  waitpid(pid, &status, 0);
+}
+
 int hello_tty_pty_set_nonblocking(int fd) {
   int flags = fcntl(fd, F_GETFL, 0);
   if (flags < 0) return -1;

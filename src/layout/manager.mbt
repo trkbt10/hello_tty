@@ -718,6 +718,74 @@ pub fn LayoutManager::close_panel(self : LayoutManager, panel_id : Int) -> Int {
 }
 
 ///|
+/// Detach a panel from the current tab's split layout and create a new tab
+/// for it in the same workspace. The panel's session is preserved (not destroyed).
+///
+/// Returns the new tab ID, or -1 on failure.
+/// Fails if the panel is the only panel in its tab (nothing to detach from).
+pub fn LayoutManager::detach_panel_to_tab(
+  self : LayoutManager,
+  panel_id : Int
+) -> Int {
+  let tab = match self.active_tab() {
+    Some(t) => t
+    None => return -1
+  }
+  // Cannot detach the only panel — that's just the tab itself.
+  if count_leaves(tab.layout) <= 1 {
+    return -1
+  }
+  let panel = match find_panel(tab.layout, panel_id) {
+    Some(p) => p
+    None => return -1
+  }
+  // Find a sibling for focus fallback in the source tab.
+  let new_focus = match find_sibling_panel(tab.layout, panel_id) {
+    Some(s) => s
+    None => return -1
+  }
+  // Remove the panel from the source tab's layout tree.
+  let new_root = match remove_panel(tab.layout, panel_id) {
+    Some(r) => r
+    None => return -1
+  }
+  tab.layout = new_root
+  tab.focused_panel_id = new_focus.panel_id
+  self.sessions.switch_to(new_focus.session_id) |> ignore
+  // Resize the source tab to fill the freed space.
+  resize_tree(new_root, self.last_total_rows, self.last_total_cols, self.divider_size)
+  self.sync_session_sizes(tab)
+  // Create a new tab with the detached panel as its sole layout node.
+  let workspace_id = self.active_workspace_id
+  let new_tab_id = self.next_tab_id
+  self.next_tab_id += 1
+  let new_tab = Tab::{
+    id: new_tab_id,
+    layout: Leaf(panel),
+    focused_panel_id: panel_id,
+    title: "",
+  }
+  self.tabs[new_tab_id] = new_tab
+  let order = self.workspace_tab_order(workspace_id)
+  order.push(new_tab_id)
+  self.tab_workspace[new_tab_id] = workspace_id
+  // Switch to the new tab.
+  self.workspace_active_tabs[workspace_id] = new_tab_id
+  self.active_tab_id = new_tab_id
+  self.sessions.switch_to(panel.session_id) |> ignore
+  // Resize the new tab's panel to the full container.
+  resize_tree(
+    new_tab.layout,
+    self.last_total_rows,
+    self.last_total_cols,
+    self.divider_size,
+  )
+  self.sync_session_sizes(new_tab)
+  self.sync_active_session()
+  new_tab_id
+}
+
+///|
 /// Focus a panel by ID.
 pub fn LayoutManager::focus_panel(self : LayoutManager, panel_id : Int) -> Bool {
   let tab = match self.active_tab() {

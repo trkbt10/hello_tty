@@ -114,6 +114,19 @@ int32_t hello_tty_classify_key(const char *key_code, const char *modifiers, cons
 // Caller must free the returned string.
 char *hello_tty_get_theme(void);
 
+// Detach a panel from the current tab's split and create a new tab.
+// Returns the new tab ID, or -1 on failure.
+int32_t hello_tty_detach_panel_to_tab(const char *panel_id);
+
+// Get UI config as JSON (computed corner radii, paddings, etc.).
+// font_line_height_x100: font line height in points × 100 as string (e.g. "1400" for 14.0pt).
+// Caller must free the returned string.
+char *hello_tty_get_ui_config(const char *font_line_height_x100);
+
+// Load configuration from a TOML string.
+// Returns 0 on success.
+int32_t hello_tty_load_config(const char *toml_str);
+
 // Get cell metrics from the GPU font engine as JSON.
 // Returns: {"cell_width":N, "cell_height":N, "dpi_scale":F}
 // Ensures GPU is initialized. Caller must free the returned string.
@@ -166,6 +179,12 @@ int32_t hello_tty_pty_write(int32_t master_fd, const uint8_t *data, int32_t len)
 
 // Close PTY master fd.
 void hello_tty_pty_close(int32_t master_fd);
+
+// Terminate a child process (SIGHUP → SIGKILL) and reap with waitpid.
+void hello_tty_pty_kill_child(int32_t pid);
+
+// Check if a process is alive. Returns 1 if alive, 0 if dead/not found.
+int32_t hello_tty_pty_is_pid_alive(int32_t pid);
 
 // Resize PTY window (sends TIOCSWINSZ ioctl).
 // Returns 0 on success, -1 on error.

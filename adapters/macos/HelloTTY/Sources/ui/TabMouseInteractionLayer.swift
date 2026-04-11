@@ -28,9 +28,7 @@ struct TabMouseInteractionLayer: NSViewRepresentable {
             registry?.unregister(for: oldTabId, view: nsView)
             registry?.register(nsView, for: tabId)
         }
-        DispatchQueue.main.async {
-            nsView.reportFrame()
-        }
+        nsView.reportFrame()
     }
 
     final class Coordinator {

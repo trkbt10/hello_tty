@@ -57,10 +57,10 @@ struct TerminalGrid {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
 
-        let rows = obj["rows"] as? Int ?? 24
-        let cols = obj["cols"] as? Int ?? 80
-
-        let cursorObj = obj["cursor"] as? [String: Any] ?? [:]
+        guard let rows = obj["rows"] as? Int,
+              let cols = obj["cols"] as? Int,
+              let cursorObj = obj["cursor"] as? [String: Any]
+        else { return nil }
         let cursor = CursorState(
             row: cursorObj["row"] as? Int ?? 0,
             col: cursorObj["col"] as? Int ?? 0,

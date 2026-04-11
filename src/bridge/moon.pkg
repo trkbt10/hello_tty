@@ -6,6 +6,7 @@ import {
   "trkbt10/hello_tty/src/renderer" @renderer,
   "trkbt10/hello_tty/src/session" @session,
   "trkbt10/hello_tty/src/theme" @theme,
+  "trkbt10/hello_tty/src/config" @config,
   "moonbitlang/core/encoding/utf8" @utf8,
 }
 

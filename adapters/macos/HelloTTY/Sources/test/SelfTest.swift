@@ -72,7 +72,13 @@ class SelfTestRunner {
                                         self.test24_osc133_inputRegion()
                                         self.test25_osc133_cursorMoveSequence()
                                         self.test26_osc133_disabledByDefault()
-                                        self.reportAndExit()
+                                        self.test27_detachPanelToTab()
+
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                            self.test28_detachPanelToTabResult()
+                                            self.test29_hoverTargetSeparation()
+                                            self.reportAndExit()
+                                        }
                                     }
                                 }
                             }
@@ -988,6 +994,119 @@ class SelfTestRunner {
         }
 
         bridge.destroySession(id: sid)
+    }
+
+    // MARK: - Panel detach and hover target tests
+
+    private var detachTestWorkspaceId: Int32?
+    private var detachTestOrigTabId: Int32?
+    private var detachTestPanelCount: Int = 0
+
+    private func test27_detachPanelToTab() {
+        NSLog("self-test: test27_detachPanelToTab")
+
+        guard let workspaceId = tabManager.activeWorkspaceId else {
+            fail("test27: no active workspace")
+            return
+        }
+        detachTestWorkspaceId = workspaceId
+
+        // Ensure we have a tab, then split it
+        let tab = tabManager.selectedTab(in: workspaceId)
+            ?? tabManager.newTab(in: workspaceId)
+        detachTestOrigTabId = tab.tabId
+        tabManager.splitFocusedPanel(in: workspaceId, direction: 0) // vertical split
+        detachTestPanelCount = tab.panels.count
+        if detachTestPanelCount < 2 {
+            fail("test27: split did not create a second panel (have \(detachTestPanelCount))")
+        } else {
+            pass("test27: split created \(detachTestPanelCount) panels, ready to detach")
+        }
+    }
+
+    private func test28_detachPanelToTabResult() {
+        NSLog("self-test: test28_detachPanelToTabResult")
+
+        guard let workspaceId = detachTestWorkspaceId,
+              let origTabId = detachTestOrigTabId,
+              let origTab = tabManager.tab(for: origTabId),
+              let panelToDetach = origTab.panels.last
+        else {
+            fail("test28: missing state from test27")
+            return
+        }
+
+        let panelId = panelToDetach.panelId
+        let tabCountBefore = tabManager.tabs(in: workspaceId).count
+
+        tabManager.detachPanelToTab(in: workspaceId, panelId: panelId)
+
+        let tabCountAfter = tabManager.tabs(in: workspaceId).count
+        let origPanelCount = origTab.panels.count
+        let newTab = tabManager.selectedTab(in: workspaceId)
+
+        if tabCountAfter != tabCountBefore + 1 {
+            fail("test28: expected \(tabCountBefore + 1) tabs, got \(tabCountAfter)")
+        } else if origPanelCount != detachTestPanelCount - 1 {
+            fail("test28: original tab should have \(detachTestPanelCount - 1) panels, got \(origPanelCount)")
+        } else if newTab == nil || newTab?.panels.first?.panelId != panelId {
+            fail("test28: new tab should contain the detached panel \(panelId)")
+        } else {
+            pass("test28: panel detached to new tab successfully")
+        }
+    }
+
+    private func test29_hoverTargetSeparation() {
+        NSLog("self-test: test29_hoverTargetSeparation")
+
+        // Verify that dragHoverTarget is separate from tabDragState
+        // and that updating one does not trigger a feedback loop.
+
+        guard let workspaceId = tabManager.activeWorkspaceId else {
+            fail("test29: no active workspace")
+            return
+        }
+
+        // Ensure at least 2 tabs
+        if tabManager.tabs(in: workspaceId).count < 2 {
+            _ = tabManager.newTab(in: workspaceId)
+        }
+        let tabs = tabManager.tabs(in: workspaceId)
+        guard tabs.count >= 2, let draggedTab = tabs.last else {
+            fail("test29: need at least 2 tabs")
+            return
+        }
+
+        // Begin drag
+        tabManager.beginTabDrag(tabId: draggedTab.tabId)
+
+        // Verify tabDragState is set but dragHoverTarget starts nil
+        guard tabManager.tabDragState != nil else {
+            fail("test29: tabDragState should be non-nil after beginTabDrag")
+            return
+        }
+
+        // Register a tab bar frame and verify hover target updates
+        let fakeBarFrame = CGRect(x: 100, y: 700, width: 400, height: 40)
+        tabManager.registerTabBarFrame(workspaceId: workspaceId, frame: fakeBarFrame)
+
+        // Update drag to a point inside the tab bar frame
+        let insidePoint = CGPoint(x: 200, y: 720)
+        tabManager.updateTabDrag(screenPoint: insidePoint)
+
+        if case .tabBar(let wid) = tabManager.dragHoverTarget, wid == workspaceId {
+            pass("test29: dragHoverTarget correctly identifies tab bar hover")
+        } else {
+            fail("test29: expected .tabBar(\(workspaceId)), got \(String(describing: tabManager.dragHoverTarget))")
+        }
+
+        // Cancel and verify cleanup
+        tabManager.cancelTabDrag()
+        if tabManager.tabDragState != nil || tabManager.dragHoverTarget != nil {
+            fail("test29: drag state should be nil after cancel")
+        } else {
+            pass("test29: drag state fully cleaned up after cancel")
+        }
     }
 
     // MARK: - Helpers

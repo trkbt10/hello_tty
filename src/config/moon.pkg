@@ -1,0 +1,13 @@
+import {
+  "bobzhang/toml" @toml,
+  "trkbt10/hello_tty/src/theme" @theme,
+  "trkbt10/hello_tty/src/renderer" @renderer,
+}
+
+options(
+  targets: {
+    "config.mbt": [ "native" ],
+    "types.mbt": [ "native" ],
+    "ui_config.mbt": [ "native" ],
+  },
+)

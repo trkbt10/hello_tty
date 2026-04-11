@@ -44,6 +44,14 @@ pub extern "C" fn pty_write(fd : Int, buf : Bytes, len : Int) -> Int = "hello_tt
 pub extern "C" fn pty_close(fd : Int) = "hello_tty_pty_close"
 
 ///|
+/// Terminate a child process (SIGHUP → SIGKILL) and reap with waitpid.
+pub extern "C" fn pty_kill_child(pid : Int) = "hello_tty_pty_kill_child"
+
+///|
+/// Check if a process is alive. Returns true if alive.
+pub extern "C" fn pty_is_pid_alive(pid : Int) -> Int = "hello_tty_pty_is_pid_alive"
+
+///|
 /// Set a file descriptor to non-blocking mode.
 pub extern "C" fn pty_set_nonblocking(fd : Int) -> Int = "hello_tty_pty_set_nonblocking"
 

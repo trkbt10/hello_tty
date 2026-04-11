@@ -13,9 +13,11 @@ struct ScreenFrameReporter: NSViewRepresentable {
 
     func updateNSView(_ nsView: ReportingView, context: Context) {
         nsView.onFrameChange = onFrameChange
-        DispatchQueue.main.async {
-            nsView.reportFrame()
-        }
+        // Report frame synchronously. The previous async dispatch caused
+        // a 1-frame delay in frame registration, creating a feedback loop
+        // with DnD hover evaluation: render → async frame report → re-trigger
+        // hover update → re-render → async frame report → flicker.
+        nsView.reportFrame()
     }
 }
 

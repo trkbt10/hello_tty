@@ -25,7 +25,7 @@ struct TerminalTheme {
     /// All color values including alpha come from MoonBit — no hardcoded overrides.
     static func fromBridge(_ bridge: MoonBitBridge) -> TerminalTheme {
         guard let info = bridge.getTheme() else {
-            return .fallback
+            fatalError("hello_tty: failed to load theme from MoonBit bridge — dylib not loaded")
         }
         return TerminalTheme(
             name: info.name,
@@ -38,18 +38,6 @@ struct TerminalTheme {
             bgAlpha: CGFloat(info.bgAlpha)
         )
     }
-
-    /// Fallback theme when bridge is not loaded.
-    static let fallback = TerminalTheme(
-        name: "Fallback",
-        foreground: NSColor(white: 0.90, alpha: 1),
-        background: NSColor(srgbRed: 0.08, green: 0.08, blue: 0.10, alpha: 0.82),
-        cursor: NSColor(srgbRed: 0.40, green: 0.70, blue: 1.0, alpha: 0.85),
-        selection: NSColor(srgbRed: 0.25, green: 0.45, blue: 0.75, alpha: 0.40),
-        boldColor: NSColor(white: 1.0, alpha: 1),
-        isDark: true,
-        bgAlpha: 0.82
-    )
 
     /// Convert RGBA tuple to NSColor. Alpha comes from the tuple's 4th element.
     /// alphaOverride: if set, overrides the tuple's alpha (used for bg with bgAlpha).
